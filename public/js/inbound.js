@@ -1,0 +1,944 @@
+'use strict';
+// ══════════════════════════════════════════════
+//  입고 관리 (inbound.js)
+// ══════════════════════════════════════════════
+
+// ── 상태 ──
+let _ibOrders       = [];          // 전체 주문 캐시
+let _currentOrder   = null;        // 현재 보고 있는 주문
+let _editOrderId    = null;        // 수정 중인 주문 ID
+let _ibFlatpickr    = null;        // 폼 날짜 flatpickr
+let _ibFpStart      = null;        // 검색 시작일 flatpickr
+let _ibFpEnd        = null;        // 검색 종료일 flatpickr
+let _ibSearchTimer  = null;        // 디바운스 타이머
+let _excelRows      = [];          // 파싱된 엑셀 행
+let _directRowCount = 5;           // 직접입력 행 수
+let _ibActiveTab    = 'all';       // 목록 탭: 'all'|'completed'|'pending'|'priority'
+let _ibBulkStatus   = 'pending';   // 폼 상단 매입상태 버튼 상태
+let _ibMemoSaving   = false;       // 메모 저장 중 플래그
+
+// ── 서브페이지 전환 ──────────────────────────
+function ibShowSubpage(name, pushState = true) {
+  ['list','detail','form'].forEach(p =>
+    document.getElementById(`ib-${p}`)?.classList.toggle('hidden', p !== name)
+  );
+  if (!pushState) return;
+  const base = '#/inbound';
+  if      (name === 'form'   && _editOrderId)   history.pushState({ ib: name, id: _editOrderId }, '', `${base}/${_editOrderId}/edit`);
+  else if (name === 'form')                      history.pushState({ ib: name }, '', `${base}/new`);
+  else if (name === 'detail' && _currentOrder)  history.pushState({ ib: name, id: _currentOrder.id }, '', `${base}/${_currentOrder.id}`);
+  else                                           history.pushState({ ib: 'list' }, '', base);
+}
+
+// ── 날짜 범위 검색 ───────────────────────────
+function ibGetDateRange() {
+  return {
+    start: document.getElementById('ib-date-start')?.value || '',
+    end:   document.getElementById('ib-date-end')?.value   || '',
+  };
+}
+
+function ibMatchDate(orderDate, start, end) {
+  if (!start && !end) return true;
+  if (start && orderDate < start) return false;
+  if (end   && orderDate > end)   return false;
+  return true;
+}
+
+function ibSetQuickRange(range) {
+  const today = new Date();
+  const fmt = d => d.toISOString().slice(0, 10);
+
+  let start = '', end = '';
+  if (range === 'today') {
+    start = end = fmt(today);
+  } else if (range === 'week') {
+    const day = today.getDay(); // 0=일
+    const mon = new Date(today); mon.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
+    const sun = new Date(mon);   sun.setDate(mon.getDate() + 6);
+    start = fmt(mon); end = fmt(sun);
+  } else if (range === 'month') {
+    start = fmt(new Date(today.getFullYear(), today.getMonth(), 1));
+    end   = fmt(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+  } else if (range === 'clear') {
+    start = ''; end = '';
+  }
+
+  if (_ibFpStart) _ibFpStart.setDate(start ? new Date(start) : null, true);
+  if (_ibFpEnd)   _ibFpEnd.setDate(end   ? new Date(end)   : null, true);
+  ibApplyFilter();
+}
+
+// ── 탭 필터 ─────────────────────────────────
+function ibFilterByTab(list) {
+  if (_ibActiveTab === 'all') return list;
+  return list.filter(o => o.statuses?.includes(_ibActiveTab));
+}
+
+function ibUpdateTabCounts() {
+  const counts = {
+    all:       _ibOrders.length,
+    completed: _ibOrders.filter(o => o.statuses?.includes('completed')).length,
+    pending:   _ibOrders.filter(o => o.statuses?.includes('pending')).length,
+    priority:  _ibOrders.filter(o => o.statuses?.includes('priority')).length,
+  };
+  Object.entries(counts).forEach(([k, v]) => {
+    const el = document.getElementById(`ib-stab-count-${k}`);
+    if (el) el.textContent = v;
+  });
+}
+
+function ibSetTab(tab) {
+  _ibActiveTab = tab;
+  document.querySelectorAll('.ib-stab').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.stab === tab)
+  );
+  ibApplyFilter();
+}
+
+// ── 검색 + 날짜 복합 필터 적용 ──────────────
+function ibApplyFilter() {
+  const { start, end } = ibGetDateRange();
+  const q = (document.getElementById('ib-search')?.value || '').toLowerCase().trim();
+
+  let list = ibFilterByTab(_ibOrders);
+
+  // 날짜 범위
+  if (start || end) {
+    list = list.filter(o => ibMatchDate(o.order_date, start, end));
+  }
+
+  // 키워드
+  if (q) {
+    list = list.filter(o => {
+      const vn   = (o.vendor_name || '').toLowerCase();
+      const date = (o.order_date  || '');
+      const itemMatch = (o.items || []).some(it =>
+        (it.model_name   || '').toLowerCase().includes(q) ||
+        (it.manufacturer || '').toLowerCase().includes(q) ||
+        (it.category     || '').toLowerCase().includes(q) ||
+        (it.notes        || '').toLowerCase().includes(q)
+      );
+      return vn.includes(q) || date.includes(q) || itemMatch;
+    });
+  }
+
+  renderIbCards(list);
+}
+
+function filterInbound() {
+  clearTimeout(_ibSearchTimer);
+  _ibSearchTimer = setTimeout(ibApplyFilter, 200);
+}
+
+// ── 목록 ────────────────────────────────────
+async function loadInboundList() {
+  const titleEl = document.getElementById('ib-list-title');
+  if (titleEl) titleEl.textContent = '매입 목록';
+  try {
+    _ibOrders = await API.get('/inbound');
+    ibUpdateTabCounts();
+    ibApplyFilter();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+function renderIbCards(list) {
+  const container = document.getElementById('ib-cards');
+  if (!list.length) {
+    container.innerHTML = '<div class="empty" style="padding:3rem;text-align:center;color:var(--gray-600)">매입 내역이 없습니다.</div>';
+    return;
+  }
+  container.innerHTML = list.map(o => {
+    const summaryText = Object.entries(o.summary || {})
+      .map(([k, v]) => `${escHtml(k)} ${v}개`).join(', ') || '품목 없음';
+    const total = Number(o.total_price || 0).toLocaleString();
+    const hasPriority  = o.statuses?.includes('priority');
+    const hasCompleted = o.statuses?.includes('completed');
+    const hasPending   = o.statuses?.includes('pending');
+    const statusBadges = [
+      hasCompleted && '<span class="ib-badge ib-badge-completed">매입완료</span>',
+      hasPriority  && '<span class="ib-badge ib-badge-priority">⚠️우선등록</span>',
+      hasPending   && '<span class="ib-badge ib-badge-pending">미완료</span>',
+    ].filter(Boolean).join(' ');
+
+    return `
+      <div class="ib-card" onclick="ibOpenDetail('${o.id}')">
+        <div class="ib-card-top">
+          <span class="ib-card-date">${escHtml(o.order_date)}</span>
+          <span class="ib-card-vendor">${escHtml(o.vendor_name || '-')}</span>
+          <div class="ib-card-badges">${statusBadges}</div>
+        </div>
+        <div class="ib-card-summary">${summaryText}</div>
+        <div class="ib-card-total">합계 <b>${total}원</b> &nbsp;·&nbsp; ${o.item_count}개 품목</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ── 상세 ────────────────────────────────────
+window.ibOpenDetail = async function(orderId) {
+  try {
+    _currentOrder = await API.get(`/inbound/${orderId}`);
+    renderIbDetail(_currentOrder);
+    ibLoadMemo(_currentOrder);
+    ibShowSubpage('detail');
+  } catch (err) { toast(err.message, 'error'); }
+};
+
+function renderIbDetail(order) {
+  const totalPrice = (order.items || []).reduce((s, i) => s + i.total_price, 0);
+  const condLabel  = { normal: '정상', defective: '불량', disposal: '폐기' };
+  const rows = (order.items || []).map(it => {
+    const statusLabel = { completed: '매입완료', pending: '매입미완료', priority: '⚠️우선등록' }[it.status] || it.status;
+    const statusCls   = { completed: 'ib-badge-completed', pending: 'ib-badge-pending', priority: 'ib-badge-priority' }[it.status] || '';
+    const cond        = condLabel[it.condition_type] || it.condition_type || '정상';
+    const condCls     = it.condition_type === 'defective' ? 'ib-cond-defective'
+                      : it.condition_type === 'disposal'  ? 'ib-cond-disposal' : '';
+    return `
+      <tr>
+        <td>${escHtml(it.category || '-')}</td>
+        <td>${escHtml(it.manufacturer)}</td>
+        <td>${escHtml(it.model_name)}</td>
+        <td class="ib-td-spec">${escHtml(it.spec || '-')}</td>
+        <td style="text-align:right">${Number(it.quantity).toLocaleString()}</td>
+        <td style="text-align:right">${Number(it.purchase_price).toLocaleString()}</td>
+        <td style="text-align:right">${Number(it.total_price).toLocaleString()}</td>
+        <td><span class="ib-badge ${condCls}">${cond}</span></td>
+        <td><span class="ib-badge ${statusCls}">${statusLabel}</span></td>
+        <td class="ib-td-notes">${escHtml(it.notes || '-')}</td>
+        <td>
+          <button class="btn btn-xs btn-ghost" onclick="ibShowPriceHistory('${it.id}','${escHtml(it.model_name)}')">이력</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  document.getElementById('ib-detail-content').innerHTML = `
+    <div class="ib-detail-header">
+      <dl class="detail-dl">
+        <div class="detail-row"><dt>입고날짜</dt><dd>${escHtml(order.order_date)}</dd></div>
+        <div class="detail-row"><dt>거래처</dt><dd>${escHtml(order.vendor_name || '-')}</dd></div>
+        <div class="detail-row"><dt>등록자</dt><dd>${escHtml(order.created_by_name || '-')}</dd></div>
+        <div class="detail-row"><dt>등록일시</dt><dd>${fmtDateTime(order.created_at)}</dd></div>
+        <div class="detail-row"><dt>수정자</dt><dd>${escHtml(order.updated_by_name || '-')}</dd></div>
+        <div class="detail-row"><dt>수정일시</dt><dd>${fmtDateTime(order.updated_at)}</dd></div>
+      </dl>
+    </div>
+    <div class="ib-tbl-scroll-top"><div class="ib-tbl-scroll-inner"></div></div>
+    <div class="ib-detail-table-wrap">
+      <table class="tbl">
+        <colgroup>
+          <col style="width:80px">
+          <col style="width:100px">
+          <col style="width:150px">
+          <col style="width:120px">
+          <col style="width:65px">
+          <col style="width:100px">
+          <col style="width:100px">
+          <col style="width:70px">
+          <col style="width:100px">
+          <col style="width:200px">
+          <col style="width:55px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>구분</th><th>브랜드</th><th>모델명</th><th>스펙</th>
+            <th style="text-align:right">수량</th>
+            <th style="text-align:right">매입가</th>
+            <th style="text-align:right">합계</th>
+            <th>처리구분</th><th>매입상태</th><th>비고</th><th>이력</th>
+          </tr>
+        </thead>
+        <tbody>${rows || '<tr><td colspan="11" class="empty">품목 없음</td></tr>'}</tbody>
+        <tfoot>
+          <tr style="background:var(--gray-50);font-weight:700">
+            <td colspan="6" style="text-align:right;padding:.6rem 1rem">합계</td>
+            <td style="text-align:right;padding:.6rem 1rem">${totalPrice.toLocaleString()}원</td>
+            <td colspan="4"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
+
+  // 상단+하단 가로 스크롤바 연동
+  ibInitDualScroll(
+    document.querySelector('#ib-detail-content .ib-detail-table-wrap'),
+    document.querySelector('#ib-detail-content .ib-tbl-scroll-top')
+  );
+
+  const delBtn = document.getElementById('btn-ib-delete');
+  if (delBtn) delBtn.style.display = currentUser?.role === 'admin' ? '' : 'none';
+}
+
+// ── 메모 ────────────────────────────────────
+function ibLoadMemo(order) {
+  const textarea = document.getElementById('ib-memo-text');
+  const metaEl   = document.getElementById('ib-memo-meta');
+  if (!textarea) return;
+
+  textarea.value = order.notes || '';
+
+  if (order.updated_by_name && order.updated_at) {
+    metaEl.textContent = `최종 수정: ${escHtml(order.updated_by_name)} · ${fmtDateTime(order.updated_at)}`;
+  } else {
+    metaEl.textContent = '';
+  }
+}
+
+async function ibSaveMemo() {
+  if (!_currentOrder || _ibMemoSaving) return;
+  const text = document.getElementById('ib-memo-text')?.value ?? '';
+
+  // 변경이 없으면 스킵
+  if (text === (_currentOrder.notes || '')) return;
+
+  _ibMemoSaving = true;
+  try {
+    const result = await API.patch(`/inbound/${_currentOrder.id}/memo`, { memo: text });
+    _currentOrder.notes          = result.notes;
+    _currentOrder.updated_at     = result.updated_at;
+    _currentOrder.updated_by_name = result.updated_by_name;
+
+    const metaEl = document.getElementById('ib-memo-meta');
+    if (metaEl) {
+      metaEl.textContent = `최종 수정: ${result.updated_by_name} · ${fmtDateTime(result.updated_at)}`;
+    }
+    // 캐시 업데이트
+    const cached = _ibOrders.find(o => o.id === _currentOrder.id);
+    if (cached) cached.notes = result.notes;
+  } catch (err) {
+    toast('메모 저장 실패: ' + err.message, 'error');
+  } finally {
+    _ibMemoSaving = false;
+  }
+}
+
+// ── 매입가 수정이력 모달 ───────────────────────
+window.ibShowPriceHistory = async function(itemId, modelName) {
+  try {
+    const history = await API.get(`/inbound/items/${itemId}/history`);
+    document.getElementById('price-hist-title').textContent = `매입가 수정이력 — ${modelName}`;
+    const tbody = document.getElementById('price-hist-tbody');
+    if (!history.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">이력이 없습니다.</td></tr>';
+    } else {
+      tbody.innerHTML = history.map(h => `
+        <tr>
+          <td>${fmtDateTime(h.changed_at)}</td>
+          <td style="text-align:right">${Number(h.old_price).toLocaleString()}원</td>
+          <td style="text-align:right">${Number(h.new_price).toLocaleString()}원</td>
+          <td>${escHtml(h.changed_by_name || '-')}</td>
+        </tr>
+      `).join('');
+    }
+    document.getElementById('modal-price-history').classList.remove('hidden');
+  } catch (err) { toast(err.message, 'error'); }
+};
+
+// ── 폼 (등록/수정) ───────────────────────────
+function ibShowForm(mode, order) {
+  _editOrderId = order?.id || null;
+  document.getElementById('ib-form-title').textContent = mode === 'edit' ? '매입 수정' : '매입 등록';
+
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById('ib-vendor-id').value   = order?.vendor_id   || '';
+  document.getElementById('ib-vendor-name').value = order?.vendor_name || '';
+
+  // 상단 매입상태 버튼 초기화
+  _ibBulkStatus = 'pending';
+  document.querySelectorAll('.ib-bulk-btn').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.status === 'pending')
+  );
+
+  if (_ibFlatpickr) _ibFlatpickr.destroy();
+  _ibFlatpickr = flatpickr('#ib-date', {
+    locale: 'ko', dateFormat: 'Y-m-d',
+    defaultDate: order?.order_date || today, allowInput: true,
+  });
+
+  ibSwitchTab('direct');
+
+  if (mode === 'edit' && order?.items?.length) {
+    _directRowCount = order.items.length;
+    ibRenderDirectTable(order.items);
+  } else {
+    _directRowCount = 5;
+    ibRenderDirectTable();
+  }
+
+  document.getElementById('ib-excel-preview').classList.add('hidden');
+  document.getElementById('ib-excel-error-bar').classList.add('hidden');
+  document.getElementById('ib-excel-filename').textContent = '';
+  document.getElementById('ib-excel-file').value = '';
+  _excelRows = [];
+
+  ibShowSubpage('form');
+}
+
+function ibSwitchTab(tab) {
+  document.querySelectorAll('.ib-form-tabs .tab').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.ibTab === tab)
+  );
+  document.getElementById('ib-tab-excel').classList.toggle('hidden', tab !== 'excel');
+  document.getElementById('ib-tab-direct').classList.toggle('hidden', tab !== 'direct');
+}
+
+// ── 상단 매입상태 버튼 (전체 적용) ────────────
+async function ibSetBulkStatus(status) {
+  const label = status === 'completed' ? '매입완료' : '매입미완료';
+  const msg   = status === 'completed'
+    ? '전체 품목을 매입완료 처리하시겠습니까?'
+    : '전체 품목을 매입미완료로 변경하시겠습니까?';
+  const ok = await confirmDialog(msg, `전체 ${label} 처리`, '변경');
+  if (!ok) return;
+
+  _ibBulkStatus = status;
+  document.querySelectorAll('.ib-bulk-btn').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.status === status)
+  );
+  document.querySelectorAll('#ib-direct-tbody [data-field="status"]').forEach(sel => {
+    sel.value = status;
+  });
+}
+
+// ── 직접 입력 테이블 ──────────────────────────
+function ibRenderDirectTable(prefill) {
+  document.getElementById('ib-row-count').value = _directRowCount;
+  const tbody = document.getElementById('ib-direct-tbody');
+
+  const rows = Array.from({ length: _directRowCount }, (_, i) => {
+    const p       = prefill?.[i] || {};
+    const st      = p.status || _ibBulkStatus;
+    const isSpec  = p.product_type === 'spec';
+    const cond    = p.condition_type || 'normal';
+    return `
+      <tr data-row="${i}">
+        <td style="text-align:center;color:var(--gray-600)">${i + 1}</td>
+        <td><input class="ib-inp" data-field="category"     value="${escHtml(p.category || '')}"     placeholder="구분" /></td>
+        <td><input class="ib-inp" data-field="manufacturer" value="${escHtml(p.manufacturer || '')}" placeholder="브랜드" /></td>
+        <td><input class="ib-inp" data-field="model_name"   value="${escHtml(p.model_name || '')}"   placeholder="모델명" /></td>
+        <td>
+          <div class="ib-type-toggle">
+            <button type="button" class="ib-type-btn${!isSpec ? ' active' : ''}" data-type="general">일반</button><button type="button" class="ib-type-btn${isSpec ? ' active' : ''}" data-type="spec">스펙</button>
+          </div>
+        </td>
+        <td class="ib-spec-cell">
+          <input class="ib-inp ib-spec-inp${!isSpec ? ' hidden' : ''}" data-field="spec"
+            value="${escHtml(p.spec || '')}" placeholder="스펙 입력"
+            autocomplete="off" list="ib-spec-datalist" />
+        </td>
+        <td><input class="ib-inp ib-num" data-field="quantity"       value="${p.quantity != null ? p.quantity : ''}"       placeholder="0" type="number" min="1" /></td>
+        <td><input class="ib-inp ib-num" data-field="purchase_price" value="${p.purchase_price != null ? p.purchase_price : ''}" placeholder="0" type="number" min="0" /></td>
+        <td class="ib-total-cell" style="text-align:right;padding:.5rem .7rem;font-size:.82rem;color:var(--gray-600)">-</td>
+        <td>
+          <select class="ib-inp" data-field="condition_type">
+            <option value="normal"    ${cond === 'normal'    ? 'selected' : ''}>정상</option>
+            <option value="defective" ${cond === 'defective' ? 'selected' : ''}>불량</option>
+            <option value="disposal"  ${cond === 'disposal'  ? 'selected' : ''}>폐기</option>
+          </select>
+        </td>
+        <td>
+          <select class="ib-inp ib-status-sel" data-field="status">
+            <option value="pending"   ${st === 'pending'   ? 'selected' : ''}>매입미완료</option>
+            <option value="completed" ${st === 'completed' ? 'selected' : ''}>매입완료</option>
+            <option value="priority"  ${st === 'priority'  ? 'selected' : ''}>우선등록</option>
+          </select>
+        </td>
+        <td><input class="ib-inp" data-field="notes" value="${escHtml(p.notes || '')}" placeholder="비고" /></td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = rows.join('');
+  ibRecalcDirectTotal();
+
+  // 수량/단가 합계 계산
+  tbody.querySelectorAll('.ib-num').forEach(inp => {
+    inp.addEventListener('input', () => ibRecalcDirectRow(inp.closest('tr')));
+  });
+
+  // 상품유형 토글
+  tbody.querySelectorAll('.ib-type-toggle').forEach(tog => {
+    tog.querySelectorAll('.ib-type-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        tog.querySelectorAll('.ib-type-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const tr      = btn.closest('tr');
+        const specInp = tr.querySelector('.ib-spec-inp');
+        if (btn.dataset.type === 'spec') {
+          specInp.classList.remove('hidden');
+          specInp.focus();
+        } else {
+          specInp.classList.add('hidden');
+          specInp.value = '';
+        }
+      });
+    });
+  });
+
+  // 스펙 자동완성 — manufacturer + model_name 변경 시 datalist 갱신
+  tbody.querySelectorAll('[data-field="spec"]').forEach(specInp => {
+    specInp.addEventListener('focus', () => ibFetchSpecSuggestions(specInp));
+    specInp.addEventListener('input', () => ibFetchSpecSuggestions(specInp));
+  });
+
+  // 듀얼 스크롤바 초기화
+  ibInitDualScroll(
+    document.querySelector('#ib-direct-table-wrap'),
+    document.querySelector('#ib-direct-tbl-scroll-top')
+  );
+}
+
+function ibRecalcDirectRow(tr) {
+  const qty   = Number(tr.querySelector('[data-field="quantity"]').value)       || 0;
+  const price = Number(tr.querySelector('[data-field="purchase_price"]').value) || 0;
+  tr.querySelector('.ib-total-cell').textContent = (qty * price).toLocaleString() + '원';
+  ibRecalcDirectTotal();
+}
+
+function ibRecalcDirectTotal() {
+  let total = 0, qty = 0;
+  document.querySelectorAll('#ib-direct-tbody tr').forEach(tr => {
+    const q = Number(tr.querySelector('[data-field="quantity"]')?.value) || 0;
+    const p = Number(tr.querySelector('[data-field="purchase_price"]')?.value) || 0;
+    qty   += q;
+    total += q * p;
+    tr.querySelector('.ib-total-cell').textContent = q && p >= 0 ? (q * p).toLocaleString() + '원' : '-';
+  });
+  document.getElementById('ib-direct-total').textContent =
+    `총 ${qty.toLocaleString()}개 / 합계 ${total.toLocaleString()}원`;
+}
+
+function ibGetDirectRows() {
+  const items = [];
+  document.querySelectorAll('#ib-direct-tbody tr').forEach(tr => {
+    const get        = f => tr.querySelector(`[data-field="${f}"]`)?.value?.trim() || '';
+    const activeType = tr.querySelector('.ib-type-btn.active')?.dataset.type || 'general';
+    const specRaw    = get('spec');
+    const spec       = activeType === 'spec' ? specRaw.toLowerCase().trim() : '';
+    items.push({
+      category:       get('category'),
+      manufacturer:   get('manufacturer'),
+      model_name:     get('model_name'),
+      product_type:   spec ? 'spec' : 'general',
+      spec,
+      quantity:       get('quantity'),
+      purchase_price: get('purchase_price'),
+      condition_type: tr.querySelector('[data-field="condition_type"]')?.value || 'normal',
+      status:         tr.querySelector('[data-field="status"]')?.value || 'pending',
+      notes:          get('notes'),
+    });
+  });
+  return items.filter(it => it.manufacturer || it.model_name);
+}
+
+// ── 스펙 자동완성 ─────────────────────────────
+let _specFetchTimer = null;
+async function ibFetchSpecSuggestions(specInp) {
+  const tr    = specInp.closest('tr');
+  const mfr   = tr.querySelector('[data-field="manufacturer"]')?.value?.trim() || '';
+  const model = tr.querySelector('[data-field="model_name"]')?.value?.trim() || '';
+  if (!mfr || !model) return;
+
+  clearTimeout(_specFetchTimer);
+  _specFetchTimer = setTimeout(async () => {
+    try {
+      const specs = await API.get(`/inbound/specs?manufacturer=${encodeURIComponent(mfr)}&model_name=${encodeURIComponent(model)}`);
+      const dl = document.getElementById('ib-spec-datalist');
+      if (dl) {
+        dl.innerHTML = specs.map(s => `<option value="${escHtml(s)}"></option>`).join('');
+      }
+    } catch (_) {}
+  }, 250);
+}
+
+// ── 듀얼 스크롤바 초기화 헬퍼 ─────────────────
+function ibInitDualScroll(wrapEl, topBarEl) {
+  if (!wrapEl || !topBarEl) return;
+  const inner = topBarEl.querySelector('.ib-tbl-scroll-inner');
+  if (!inner) return;
+  // 너비 동기화 (렌더 후 1tick 대기)
+  requestAnimationFrame(() => {
+    inner.style.width = wrapEl.scrollWidth + 'px';
+  });
+  let syncTop = false, syncBot = false;
+  topBarEl.addEventListener('scroll', () => {
+    if (syncBot) return; syncTop = true;
+    wrapEl.scrollLeft = topBarEl.scrollLeft;
+    syncTop = false;
+  });
+  wrapEl.addEventListener('scroll', () => {
+    if (syncTop) return; syncBot = true;
+    topBarEl.scrollLeft = wrapEl.scrollLeft;
+    syncBot = false;
+  });
+}
+
+// ── 엑셀 업로드 ──────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('ib-excel-file')?.addEventListener('change', function () {
+    const file = this.files?.[0];
+    if (!file) return;
+    document.getElementById('ib-excel-filename').textContent = file.name;
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb   = XLSX.read(e.target.result, { type: 'array' });
+        const ws   = wb.Sheets[wb.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        ibParseExcel(data.slice(1).filter(r => r.some(c => String(c).trim())));
+      } catch (err) { toast('엑셀 파일 파싱 실패: ' + err.message, 'error'); }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+});
+
+// 처리구분 문자열 → condition_type 변환 (대소문자 무관)
+function ibParseConditionType(raw) {
+  const v = String(raw ?? '').trim().toLowerCase();
+  if (!v)       return { val: 'normal',    err: null };
+  if (v === '불량') return { val: 'defective', err: null };
+  if (v === '폐기') return { val: 'disposal',  err: null };
+  return { val: null, err: '처리구분은 빈칸/불량/폐기만 입력 가능합니다.' };
+}
+
+function ibParseExcel(rows) {
+  // A:구분 B:브랜드 C:모델명 D:스펙 E:수량 F:매입가 G:처리구분 H:비고
+  const errorLines = [];
+  _excelRows = rows.map((r, idx) => {
+    const rowNum       = idx + 2;
+    const category     = String(r[0] ?? '').trim();
+    const manufacturer = String(r[1] ?? '').trim();
+    const model_name   = String(r[2] ?? '').trim();
+    const specRaw      = String(r[3] ?? '').trim();
+    const quantityRaw  = String(r[4] ?? '').trim();
+    const priceRaw     = String(r[5] ?? '').trim();
+    const condRaw      = String(r[6] ?? '').trim();
+    const notes        = String(r[7] ?? '').trim();
+
+    const spec         = specRaw.toLowerCase().trim();
+    const product_type = spec ? 'spec' : 'general';
+
+    const _errCols = new Set();
+    const rowMsgs  = [];
+
+    if (!manufacturer) {
+      _errCols.add('B');
+      rowMsgs.push(`${rowNum}행 B열(브랜드)이 비어있습니다`);
+    }
+    if (!model_name) {
+      _errCols.add('C');
+      rowMsgs.push(`${rowNum}행 C열(모델명)이 비어있습니다`);
+    }
+
+    const quantity = Number(quantityRaw);
+    if (!quantityRaw || isNaN(quantity) || quantity <= 0) {
+      _errCols.add('E');
+      rowMsgs.push(
+        !quantityRaw
+          ? `${rowNum}행 E열(수량)이 비어있습니다`
+          : `${rowNum}행 E열(수량)에 숫자가 아닌 값이 있습니다`
+      );
+    }
+
+    const purchase_price = Number(priceRaw);
+    if (priceRaw === '' || isNaN(purchase_price) || purchase_price < 0) {
+      _errCols.add('F');
+      rowMsgs.push(
+        priceRaw === ''
+          ? `${rowNum}행 F열(매입가)이 비어있습니다`
+          : `${rowNum}행 F열(매입가)에 올바르지 않은 값이 있습니다`
+      );
+    }
+
+    const { val: condition_type, err: condErr } = ibParseConditionType(condRaw);
+    if (condErr) {
+      _errCols.add('G');
+      rowMsgs.push(`${rowNum}행 G열: ${condErr}`);
+    }
+
+    if (rowMsgs.length) errorLines.push(...rowMsgs);
+    return {
+      _row: rowNum, _errCols,
+      category, manufacturer, model_name, product_type, spec,
+      quantity, purchase_price,
+      condition_type: condition_type || 'normal',
+      status: 'pending', notes,
+    };
+  });
+
+  // 오류 표시 바
+  const errBar   = document.getElementById('ib-excel-error-bar');
+  const errCount = _excelRows.filter(r => r._errCols.size > 0).length;
+  if (errorLines.length) {
+    errBar.innerHTML =
+      `<b>⚠ ${errCount}개 행에 오류가 있습니다</b><ul class="ib-err-list">` +
+      errorLines.map(m => `<li>${escHtml(m)}</li>`).join('') +
+      `</ul>`;
+    errBar.classList.remove('hidden');
+  } else {
+    errBar.classList.add('hidden');
+  }
+
+  const condLabel = { normal: '정상', defective: '불량', disposal: '폐기' };
+
+  // 미리보기 테이블
+  document.getElementById('ib-excel-tbody').innerHTML = _excelRows.map(r => {
+    const hasErr   = r._errCols.size > 0;
+    const rowStyle = hasErr ? 'style="background:#fff0f0"' : '';
+    const total    = (r.quantity || 0) * (r.purchase_price || 0);
+    const cellErr  = col => r._errCols.has(col)
+      ? ' style="background:#ffd6d6;color:var(--danger);font-weight:700"' : '';
+    return `
+      <tr ${rowStyle}>
+        <td style="text-align:center${hasErr ? ';color:var(--danger);font-weight:700' : ''}">${r._row}</td>
+        <td>${escHtml(r.category)}</td>
+        <td${cellErr('B')}>${escHtml(r.manufacturer) || '<span style="color:var(--danger)">비어있음</span>'}</td>
+        <td${cellErr('C')}>${escHtml(r.model_name)   || '<span style="color:var(--danger)">비어있음</span>'}</td>
+        <td>${escHtml(r.spec) || '-'}</td>
+        <td style="text-align:right"${cellErr('E')}>${r._errCols.has('E') ? '<span style="color:var(--danger)">오류</span>' : r.quantity}</td>
+        <td style="text-align:right"${cellErr('F')}>${r._errCols.has('F') ? '<span style="color:var(--danger)">오류</span>' : r.purchase_price.toLocaleString()}</td>
+        <td style="text-align:right">${hasErr ? '-' : total.toLocaleString()}</td>
+        <td${cellErr('G')}>${r._errCols.has('G') ? '<span style="color:var(--danger)">오류</span>' : condLabel[r.condition_type]}</td>
+        <td>${escHtml(r.notes)}</td>
+      </tr>`;
+  }).join('');
+
+  document.getElementById('btn-ib-excel-save').disabled = _excelRows.some(r => r._errCols.size > 0);
+  const total = _excelRows.reduce((s, r) => s + (r._errCols.size > 0 ? 0 : r.quantity * r.purchase_price), 0);
+  document.getElementById('ib-excel-total').textContent = `${_excelRows.length}개 품목 / 합계 ${total.toLocaleString()}원`;
+  document.getElementById('ib-excel-preview').classList.remove('hidden');
+
+  // 엑셀 미리보기 테이블 듀얼 스크롤 초기화
+  ibInitDualScroll(
+    document.querySelector('#ib-excel-preview .table-wrap'),
+    document.querySelector('#ib-excel-tbl-scroll-top')
+  );
+}
+
+function ibDownloadTemplate() {
+  // A:구분 B:브랜드 C:모델명 D:스펙 E:수량 F:매입가 G:처리구분 H:비고
+  // 1행: 헤더(회색) 2행: 예시(노란) 3행+: 빈 행
+  const header  = ['구분', '브랜드', '모델명', '스펙', '수량', '매입가', '처리구분', '비고'];
+  const example = ['노트북', 'LG', '그램', 'i5 16G', 1, 800000, '불량', ''];
+  const data    = [header, example];
+  for (let i = 0; i < 14; i++) data.push(['', '', '', '', '', '', '', '']);
+
+  const ws = XLSX.utils.aoa_to_sheet(data);
+
+  // 헤더 행 회색, 예시 행 노란색
+  const headerStyle  = { fill: { fgColor: { rgb: 'DDE1EA' } }, font: { bold: true } };
+  const exampleStyle = { fill: { fgColor: { rgb: 'FFFDE7' } } };
+  const cols = ['A','B','C','D','E','F','G','H'];
+  cols.forEach(c => {
+    if (ws[c + '1']) ws[c + '1'].s = headerStyle;
+    if (ws[c + '2']) ws[c + '2'].s = exampleStyle;
+  });
+
+  // 열 너비
+  ws['!cols'] = [10,12,16,14,8,10,10,14].map(w => ({ wch: w }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '매입양식');
+  XLSX.writeFile(wb, '매입_입력양식.xlsx');
+}
+
+// ── 저장 ────────────────────────────────────
+async function ibSave(items) {
+  const order_date  = document.getElementById('ib-date').value;
+  const vendor_id   = document.getElementById('ib-vendor-id').value || null;
+  const vendor_name = document.getElementById('ib-vendor-name').value.trim() || null;
+
+  if (!order_date)   { toast('입고날짜를 선택하세요.', 'error'); return; }
+  if (!items.length) { toast('품목이 없습니다.', 'error'); return; }
+
+  for (const it of items) {
+    if (!it.manufacturer)           { toast('브랜드가 비어있는 행이 있습니다.', 'error'); return; }
+    if (!it.model_name)             { toast('모델명이 비어있는 행이 있습니다.', 'error'); return; }
+    if (!(Number(it.quantity) > 0)) { toast(`'${it.model_name}' 수량이 올바르지 않습니다.`, 'error'); return; }
+    if (Number(it.purchase_price) < 0) { toast(`'${it.model_name}' 매입가가 올바르지 않습니다.`, 'error'); return; }
+  }
+
+  try {
+    let result;
+    if (_editOrderId) {
+      result = await API.put(`/inbound/${_editOrderId}`, { order_date, vendor_id, vendor_name, items });
+      toast('매입이 수정되었습니다.', 'success');
+    } else {
+      result = await API.post('/inbound', { order_date, vendor_id, vendor_name, items });
+      toast('매입이 등록되었습니다.', 'success');
+    }
+
+    if (result.warnings?.length) {
+      const msgs = result.warnings.map(w =>
+        `${w.model}: ${Math.round(w.pctChange * 100)}% 변동 (${Math.round(w.oldAvg).toLocaleString()} → ${Math.round(w.newAvg).toLocaleString()}원)`
+      ).join('\n');
+      toast(`⚠️ 이동평균 30% 이상 변동:\n${msgs}`, 'info', 6000);
+    }
+
+    _editOrderId = null;
+    // 버그 수정: 저장 후 탭을 all로 리셋 → 상태 변경 카드가 사라지지 않음
+    _ibActiveTab = 'all';
+    document.querySelectorAll('.ib-stab').forEach(btn =>
+      btn.classList.toggle('active', btn.dataset.stab === 'all')
+    );
+    await loadInboundList();
+    ibShowSubpage('list');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// ── 삭제 ────────────────────────────────────
+async function ibDeleteOrder() {
+  if (!_currentOrder) return;
+  const ok = await confirmDialog(
+    `'${_currentOrder.order_date} / ${_currentOrder.vendor_name || '거래처 없음'}' 매입을 삭제하시겠습니까?\n매입완료/우선등록 품목의 재고가 자동 차감됩니다.`,
+    '매입 삭제', '삭제'
+  );
+  if (!ok) return;
+  try {
+    await API.del(`/inbound/${_currentOrder.id}`);
+    toast('매입이 삭제되었습니다.', 'success');
+    _currentOrder = null;
+    _ibActiveTab  = 'all';
+    document.querySelectorAll('.ib-stab').forEach(btn =>
+      btn.classList.toggle('active', btn.dataset.stab === 'all')
+    );
+    await loadInboundList();
+    ibShowSubpage('list');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// ── 뒤로가기 (popstate) ──────────────────────
+window.addEventListener('popstate', (e) => {
+  const state = e.state;
+  if (!state || state.ib === 'list') {
+    ibShowSubpage('list', false);
+  } else if (state.ib === 'detail' && state.id) {
+    ibOpenDetail(state.id);
+  } else if (state.ib === 'form') {
+    if (state.id) {
+      const order = _ibOrders.find(o => o.id === state.id);
+      if (order) ibShowForm('edit', order);
+    } else {
+      ibShowForm('create', null);
+    }
+  }
+});
+
+// ── 이벤트 바인딩 ────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  // 날짜 범위 flatpickr 초기화
+  if (document.getElementById('ib-date-start')) {
+    _ibFpStart = flatpickr('#ib-date-start', {
+      locale: 'ko', dateFormat: 'Y-m-d', allowInput: true,
+      onChange: () => { clearTimeout(_ibSearchTimer); _ibSearchTimer = setTimeout(ibApplyFilter, 200); },
+    });
+    _ibFpEnd = flatpickr('#ib-date-end', {
+      locale: 'ko', dateFormat: 'Y-m-d', allowInput: true,
+      onChange: () => { clearTimeout(_ibSearchTimer); _ibSearchTimer = setTimeout(ibApplyFilter, 200); },
+    });
+  }
+
+  // 빠른 날짜 선택 버튼
+  document.querySelectorAll('.ib-quick-btn').forEach(btn => {
+    btn.addEventListener('click', () => ibSetQuickRange(btn.dataset.range));
+  });
+
+  // 키워드 검색
+  document.getElementById('ib-search')?.addEventListener('input', filterInbound);
+
+  // 목록
+  document.getElementById('btn-ib-new')?.addEventListener('click', () => ibShowForm('create', null));
+
+  // 상태 탭 필터
+  document.querySelectorAll('.ib-stab').forEach(btn => {
+    btn.addEventListener('click', () => ibSetTab(btn.dataset.stab));
+  });
+
+  // 상단 매입상태 버튼
+  document.querySelectorAll('.ib-bulk-btn').forEach(btn => {
+    btn.addEventListener('click', () => ibSetBulkStatus(btn.dataset.status));
+  });
+
+  // 상세 뒤로
+  document.getElementById('btn-ib-back-detail')?.addEventListener('click', () => {
+    _currentOrder = null;
+    ibShowSubpage('list');
+  });
+  document.getElementById('btn-ib-edit')?.addEventListener('click', () => {
+    if (_currentOrder) ibShowForm('edit', _currentOrder);
+  });
+  document.getElementById('btn-ib-delete')?.addEventListener('click', ibDeleteOrder);
+
+  // 폼 뒤로
+  document.getElementById('btn-ib-back-form')?.addEventListener('click', () => {
+    _editOrderId = null;
+    if (_currentOrder) ibShowSubpage('detail');
+    else ibShowSubpage('list');
+  });
+
+  // 탭 전환
+  document.querySelectorAll('.ib-form-tabs .tab').forEach(btn => {
+    btn.addEventListener('click', () => ibSwitchTab(btn.dataset.ibTab));
+  });
+
+  // 거래처 검색
+  document.getElementById('btn-ib-pick-vendor')?.addEventListener('click', () => {
+    openVendorPicker(v => {
+      document.getElementById('ib-vendor-id').value   = v.id;
+      document.getElementById('ib-vendor-name').value = v.company_name;
+    }, 'purchase');
+  });
+
+  // 직접 입력 행 수
+  document.getElementById('btn-ib-set-rows')?.addEventListener('click', () => {
+    const n = parseInt(document.getElementById('ib-row-count').value) || 5;
+    const existing = ibGetDirectRows();
+    _directRowCount = Math.min(200, Math.max(1, n));
+    ibRenderDirectTable(existing);
+  });
+  document.getElementById('ib-row-count')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('btn-ib-set-rows').click();
+  });
+
+  // 상단 저장 버튼 (탭에 관계없이 활성 탭 저장)
+  document.getElementById('btn-ib-save-top')?.addEventListener('click', () => {
+    const isExcel = !document.getElementById('ib-tab-excel').classList.contains('hidden');
+    if (isExcel) {
+      ibSave(_excelRows.filter(r => r._errCols.size === 0));
+    } else {
+      ibSave(ibGetDirectRows());
+    }
+  });
+
+  // 직접 입력 저장
+  document.getElementById('btn-ib-direct-save')?.addEventListener('click', () => ibSave(ibGetDirectRows()));
+
+  // 엑셀 일괄 등록
+  document.getElementById('btn-ib-excel-save')?.addEventListener('click', () => {
+    ibSave(_excelRows.filter(r => r._errCols.size === 0));
+  });
+
+  // 양식 다운로드
+  document.getElementById('btn-ib-template')?.addEventListener('click', ibDownloadTemplate);
+
+  // 메모 자동 저장 (blur 시)
+  document.getElementById('ib-memo-text')?.addEventListener('blur', ibSaveMemo);
+
+  // 메모 접기/펼치기
+  document.getElementById('btn-ib-memo-toggle')?.addEventListener('click', () => {
+    const body   = document.getElementById('ib-memo-body');
+    const btn    = document.getElementById('btn-ib-memo-toggle');
+    const hidden = body.classList.toggle('hidden');
+    btn.textContent = hidden ? '펼치기' : '접기';
+  });
+
+  // 매입가 이력 모달 닫기
+  document.getElementById('btn-price-hist-close')?.addEventListener('click',  () => document.getElementById('modal-price-history').classList.add('hidden'));
+  document.getElementById('btn-price-hist-close2')?.addEventListener('click', () => document.getElementById('modal-price-history').classList.add('hidden'));
+  document.getElementById('modal-price-history')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('modal-price-history'))
+      document.getElementById('modal-price-history').classList.add('hidden');
+  });
+});
