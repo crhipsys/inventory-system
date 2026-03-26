@@ -188,14 +188,21 @@ window.ibOpenDetail = async function(orderId) {
 function renderIbDetail(order) {
   const totalPrice = (order.items || []).reduce((s, i) => s + i.total_price, 0);
   const condLabel  = { normal: '정상', defective: '불량', disposal: '폐기' };
+  const isEditor = currentUser?.role === 'editor' || currentUser?.role === 'admin';
   const rows = (order.items || []).map(it => {
-    const statusLabel = { completed: '매입완료', pending: '매입미완료', priority: '⚠️우선등록' }[it.status] || it.status;
-    const statusCls   = { completed: 'ib-badge-completed', pending: 'ib-badge-pending', priority: 'ib-badge-priority' }[it.status] || '';
-    const cond        = condLabel[it.condition_type] || it.condition_type || '정상';
-    const condCls     = it.condition_type === 'defective' ? 'ib-cond-defective'
-                      : it.condition_type === 'disposal'  ? 'ib-cond-disposal' : '';
+    const cond    = condLabel[it.condition_type] || it.condition_type || '정상';
+    const condCls = it.condition_type === 'defective' ? 'ib-cond-defective'
+                  : it.condition_type === 'disposal'  ? 'ib-cond-disposal' : '';
+    const priorityCls = it.status === 'priority' ? ' ib-row-priority' : '';
+    const statusCell  = isEditor
+      ? `<select class="ib-inp ib-detail-status-sel" data-item-id="${it.id}" style="font-size:.78rem;padding:.2rem .3rem">
+           <option value="pending"   ${it.status === 'pending'   ? 'selected' : ''}>매입미완료</option>
+           <option value="completed" ${it.status === 'completed' ? 'selected' : ''}>매입완료</option>
+           <option value="priority"  ${it.status === 'priority'  ? 'selected' : ''}>⚠️ 우선등록</option>
+         </select>`
+      : `<span class="ib-badge ${{ completed:'ib-badge-completed', pending:'ib-badge-pending', priority:'ib-badge-priority' }[it.status]||''}">${{ completed:'매입완료', pending:'매입미완료', priority:'⚠️우선등록' }[it.status]||it.status}</span>`;
     return `
-      <tr>
+      <tr class="${priorityCls}">
         <td>${escHtml(it.category || '-')}</td>
         <td>${escHtml(it.manufacturer)}</td>
         <td>${escHtml(it.model_name)}</td>
@@ -204,7 +211,7 @@ function renderIbDetail(order) {
         <td style="text-align:right">${Number(it.purchase_price).toLocaleString()}</td>
         <td style="text-align:right">${Number(it.total_price).toLocaleString()}</td>
         <td><span class="ib-badge ${condCls}">${cond}</span></td>
-        <td><span class="ib-badge ${statusCls}">${statusLabel}</span></td>
+        <td>${statusCell}</td>
         <td class="ib-td-notes">${escHtml(it.notes || '-')}</td>
         <td>
           <button class="btn btn-xs btn-ghost" onclick="ibShowPriceHistory('${it.id}','${escHtml(it.model_name)}')">이력</button>
@@ -224,6 +231,15 @@ function renderIbDetail(order) {
         <div class="detail-row"><dt>수정일시</dt><dd>${fmtDateTime(order.updated_at)}</dd></div>
       </dl>
     </div>
+    ${isEditor ? `
+    <div class="ib-bulk-bar">
+      <span class="ib-bulk-label">일괄 변경</span>
+      <div class="ib-bulk-btns">
+        <button type="button" class="ib-detail-bulk-btn" data-status="pending">매입미완료</button>
+        <button type="button" class="ib-detail-bulk-btn" data-status="completed">매입완료</button>
+        <button type="button" class="ib-detail-bulk-btn" data-status="priority">⚠ 우선등록</button>
+      </div>
+    </div>` : ''}
     <div class="ib-tbl-scroll-top"><div class="ib-tbl-scroll-inner"></div></div>
     <div class="ib-detail-table-wrap">
       <table class="tbl">
@@ -269,6 +285,67 @@ function renderIbDetail(order) {
 
   const delBtn = document.getElementById('btn-ib-delete');
   if (delBtn) delBtn.style.display = currentUser?.role === 'admin' ? '' : 'none';
+
+  // 상세 페이지: 개별 상태 드롭다운 이벤트
+  const detailContent = document.getElementById('ib-detail-content');
+  detailContent.querySelectorAll('.ib-detail-status-sel').forEach(sel => {
+    sel.addEventListener('change', () => ibDetailChangeItemStatus(sel));
+  });
+
+  // 상세 페이지: 일괄 변경 버튼 이벤트
+  detailContent.querySelectorAll('.ib-detail-bulk-btn').forEach(btn => {
+    btn.addEventListener('click', () => ibDetailBulkStatus(order, btn.dataset.status));
+  });
+}
+
+// ── 상세 페이지 개별 상태 변경 ──────────────
+async function ibDetailChangeItemStatus(sel) {
+  const itemId    = sel.dataset.itemId;
+  const newStatus = sel.value;
+  const oldStatus = sel.dataset.prev || sel.value;
+  sel.dataset.prev = newStatus;
+  const labels = { completed: '매입완료', pending: '매입미완료', priority: '⚠️우선등록' };
+  try {
+    const result = await API.put(`/inbound/items/${itemId}/status`, { status: newStatus });
+    const tr = sel.closest('tr');
+    ibUpdateRowPriorityStyle(tr, newStatus);
+    if (result.pctChange !== undefined && Math.abs(result.pctChange) >= 0.3) {
+      toast(`이동평균가 ${(result.pctChange * 100).toFixed(1)}% 변동됨`, 'warning');
+    }
+    toast(`${labels[newStatus]}으로 변경됨`, 'success');
+  } catch (err) {
+    sel.value = oldStatus;
+    sel.dataset.prev = oldStatus;
+    toast(err.message, 'error');
+  }
+}
+
+// ── 상세 페이지 일괄 상태 변경 ──────────────
+async function ibDetailBulkStatus(order, status) {
+  const labels = { completed: '매입완료', pending: '매입미완료', priority: '우선등록' };
+  const msgs   = {
+    completed: '전체 품목을 매입완료 처리하시겠습니까?',
+    pending:   '전체 품목을 매입미완료로 변경하시겠습니까?',
+    priority:  '전체 품목을 우선등록 처리하시겠습니까?',
+  };
+  const ok = await confirmDialog(msgs[status], `전체 ${labels[status]} 처리`, '변경');
+  if (!ok) return;
+
+  const sels = document.querySelectorAll('#ib-detail-content .ib-detail-status-sel');
+  let changed = 0;
+  for (const sel of sels) {
+    if (sel.value === status) continue;
+    try {
+      await API.put(`/inbound/items/${sel.dataset.itemId}/status`, { status });
+      sel.value = status;
+      sel.dataset.prev = status;
+      ibUpdateRowPriorityStyle(sel.closest('tr'), status);
+      changed++;
+    } catch (err) {
+      toast(`일부 항목 변경 실패: ${err.message}`, 'error');
+    }
+  }
+  if (changed > 0) toast(`${changed}개 항목이 ${labels[status]}으로 변경됨`, 'success');
 }
 
 // ── 메모 ────────────────────────────────────
@@ -386,11 +463,14 @@ function ibSwitchTab(tab) {
 
 // ── 상단 매입상태 버튼 (전체 적용) ────────────
 async function ibSetBulkStatus(status) {
-  const label = status === 'completed' ? '매입완료' : '매입미완료';
-  const msg   = status === 'completed'
-    ? '전체 품목을 매입완료 처리하시겠습니까?'
-    : '전체 품목을 매입미완료로 변경하시겠습니까?';
-  const ok = await confirmDialog(msg, `전체 ${label} 처리`, '변경');
+  const labels = { completed: '매입완료', pending: '매입미완료', priority: '우선등록' };
+  const msgs   = {
+    completed: '전체 품목을 매입완료 처리하시겠습니까?',
+    pending:   '전체 품목을 매입미완료로 변경하시겠습니까?',
+    priority:  '전체 품목을 우선등록 처리하시겠습니까?',
+  };
+  const label = labels[status] || status;
+  const ok = await confirmDialog(msgs[status], `전체 ${label} 처리`, '변경');
   if (!ok) return;
 
   _ibBulkStatus = status;
@@ -399,7 +479,13 @@ async function ibSetBulkStatus(status) {
   );
   document.querySelectorAll('#ib-direct-tbody [data-field="status"]').forEach(sel => {
     sel.value = status;
+    ibUpdateRowPriorityStyle(sel.closest('tr'), status);
   });
+}
+
+function ibUpdateRowPriorityStyle(tr, status) {
+  if (!tr) return;
+  tr.classList.toggle('ib-row-priority', status === 'priority');
 }
 
 // ── 직접 입력 테이블 ──────────────────────────
@@ -453,9 +539,20 @@ function ibRenderDirectTable(prefill) {
   tbody.innerHTML = rows.join('');
   ibRecalcDirectTotal();
 
+  // 초기 priority 행 스타일
+  tbody.querySelectorAll('tr').forEach(tr => {
+    const sel = tr.querySelector('.ib-status-sel');
+    if (sel) ibUpdateRowPriorityStyle(tr, sel.value);
+  });
+
   // 수량/단가 합계 계산
   tbody.querySelectorAll('.ib-num').forEach(inp => {
     inp.addEventListener('input', () => ibRecalcDirectRow(inp.closest('tr')));
+  });
+
+  // 개별 상태 드롭다운 변경 시 행 스타일 반영
+  tbody.querySelectorAll('.ib-status-sel').forEach(sel => {
+    sel.addEventListener('change', () => ibUpdateRowPriorityStyle(sel.closest('tr'), sel.value));
   });
 
   // 상품유형 토글

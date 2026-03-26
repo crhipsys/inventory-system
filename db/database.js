@@ -95,6 +95,9 @@ async function runMigrations(adapter) {
     { table: 'outbound',         column: 'product_type',    def: "TEXT NOT NULL DEFAULT 'general'" },
     { table: 'outbound',         column: 'spec',            def: "TEXT NOT NULL DEFAULT ''" },
     { table: 'avg_price_history', column: 'spec',           def: "TEXT NOT NULL DEFAULT ''" },
+    { table: 'outbound',         column: 'sales_vendor_id', def: 'TEXT' },
+    { table: 'sales_vendors',    column: 'contact_person',  def: 'TEXT' },
+    { table: 'sales_vendors',    column: 'name',            def: 'TEXT' },
   ];
 
   for (const c of cols) {
@@ -249,6 +252,296 @@ async function migrateInventory(adapter) {
     }
   } catch (err) {
     console.log('[Migration] inventory:', err.message);
+  }
+}
+
+// ── Company Info 테이블 마이그레이션 ───────────────────────────
+async function migrateCompanyInfo(adapter) {
+  try {
+    if (adapter._isPg) {
+      await adapter.runAsync(`
+        CREATE TABLE IF NOT EXISTS company_info (
+          id TEXT PRIMARY KEY DEFAULT 'main',
+          company_name TEXT,
+          representative TEXT,
+          business_number TEXT,
+          business_license_image TEXT,
+          address TEXT,
+          phone TEXT,
+          fax TEXT,
+          email TEXT,
+          bank_name TEXT,
+          account_number TEXT,
+          account_holder TEXT,
+          notes TEXT,
+          updated_at TEXT,
+          updated_by TEXT
+        )
+      `);
+    } else {
+      adapter.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS company_info (
+          id TEXT PRIMARY KEY DEFAULT 'main',
+          company_name TEXT,
+          representative TEXT,
+          business_number TEXT,
+          business_license_image TEXT,
+          address TEXT,
+          phone TEXT,
+          fax TEXT,
+          email TEXT,
+          bank_name TEXT,
+          account_number TEXT,
+          account_holder TEXT,
+          notes TEXT,
+          updated_at TEXT,
+          updated_by TEXT
+        )
+      `);
+    }
+    console.log('[Migration] company_info 테이블 확인 완료');
+  } catch (err) {
+    console.error('[Migration] company_info 오류:', err.message);
+  }
+}
+
+// ── Inventory2 마이그레이션 (has_temp_purchase, adjustment 컬럼 추가) ──────
+async function migrateInventory2(adapter) {
+  try {
+    const newCols = [
+      { table: 'inventory',             column: 'has_temp_purchase', def: 'INTEGER NOT NULL DEFAULT 0' },
+      { table: 'inventory_adjustments', column: 'spec',              def: "TEXT NOT NULL DEFAULT ''" },
+      { table: 'inventory_adjustments', column: 'category',          def: 'TEXT' },
+      { table: 'inventory_adjustments', column: 'performer_name',    def: 'TEXT' },
+    ];
+    for (const c of newCols) {
+      try {
+        if (adapter._isPg) {
+          await adapter.runAsync(
+            `ALTER TABLE ${c.table} ADD COLUMN IF NOT EXISTS ${c.column} ${c.def}`
+          );
+        } else {
+          const existing = adapter.sqlite
+            .prepare(`PRAGMA table_info(${c.table})`).all()
+            .map(r => r.name);
+          if (!existing.includes(c.column)) {
+            adapter.sqlite.exec(`ALTER TABLE ${c.table} ADD COLUMN ${c.column} ${c.def}`);
+          }
+        }
+      } catch(e) { console.log(`[Migration] inv2 ${c.table}.${c.column}: ${e.message}`); }
+    }
+    console.log('[Migration] inventory2 컬럼 확인 완료');
+  } catch (err) {
+    console.log('[Migration] inventory2:', err.message);
+  }
+}
+
+// ── Returns2 테이블 마이그레이션 (return_orders/return_items/exchange_items) ──
+async function migrateReturns2(adapter) {
+  try {
+    if (adapter._isPg) {
+      await adapter.runAsync(`
+        CREATE TABLE IF NOT EXISTS return_orders (
+          id                TEXT PRIMARY KEY,
+          type              TEXT NOT NULL DEFAULT 'return',
+          status            TEXT NOT NULL DEFAULT 'pending',
+          received_at       TEXT NOT NULL,
+          sales_vendor_id   TEXT,
+          vendor_name       TEXT,
+          linked_outbound_id TEXT,
+          reason            TEXT NOT NULL DEFAULT 'other',
+          notes             TEXT,
+          created_at        TEXT NOT NULL DEFAULT NOW(),
+          created_by        TEXT,
+          updated_at        TEXT,
+          updated_by        TEXT,
+          is_deleted        INTEGER NOT NULL DEFAULT 0,
+          deleted_at        TEXT
+        )
+      `);
+      await adapter.runAsync(`
+        CREATE TABLE IF NOT EXISTS return_items (
+          id                TEXT PRIMARY KEY,
+          return_order_id   TEXT NOT NULL,
+          outbound_item_id  TEXT,
+          category          TEXT,
+          manufacturer      TEXT NOT NULL DEFAULT '',
+          model_name        TEXT NOT NULL DEFAULT '',
+          spec              TEXT NOT NULL DEFAULT '',
+          quantity          INTEGER NOT NULL DEFAULT 0,
+          condition         TEXT NOT NULL DEFAULT 'normal',
+          notes             TEXT,
+          created_at        TEXT NOT NULL DEFAULT NOW()
+        )
+      `);
+      await adapter.runAsync(`
+        CREATE TABLE IF NOT EXISTS exchange_items (
+          id                TEXT PRIMARY KEY,
+          return_order_id   TEXT NOT NULL,
+          category          TEXT,
+          manufacturer      TEXT NOT NULL DEFAULT '',
+          model_name        TEXT NOT NULL DEFAULT '',
+          spec              TEXT NOT NULL DEFAULT '',
+          quantity          INTEGER NOT NULL DEFAULT 0,
+          sale_price        REAL NOT NULL DEFAULT 0,
+          total_price       REAL NOT NULL DEFAULT 0,
+          notes             TEXT,
+          created_at        TEXT NOT NULL DEFAULT NOW()
+        )
+      `);
+    } else {
+      adapter.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS return_orders (
+          id                TEXT PRIMARY KEY,
+          type              TEXT NOT NULL DEFAULT 'return'
+                              CHECK (type IN ('return', 'exchange')),
+          status            TEXT NOT NULL DEFAULT 'pending'
+                              CHECK (status IN ('pending','testing','normal','defective','exchange_pending','exchange_done')),
+          received_at       TEXT NOT NULL,
+          sales_vendor_id   TEXT,
+          vendor_name       TEXT,
+          linked_outbound_id TEXT,
+          reason            TEXT NOT NULL DEFAULT 'other'
+                              CHECK (reason IN ('change_of_mind','wrong_delivery','defect_suspected','other')),
+          notes             TEXT,
+          created_at        TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+          created_by        TEXT,
+          updated_at        TEXT,
+          updated_by        TEXT,
+          is_deleted        INTEGER NOT NULL DEFAULT 0,
+          deleted_at        TEXT
+        )
+      `);
+      adapter.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS return_items (
+          id                TEXT PRIMARY KEY,
+          return_order_id   TEXT NOT NULL,
+          outbound_item_id  TEXT,
+          category          TEXT,
+          manufacturer      TEXT NOT NULL DEFAULT '',
+          model_name        TEXT NOT NULL DEFAULT '',
+          spec              TEXT NOT NULL DEFAULT '',
+          quantity          INTEGER NOT NULL DEFAULT 0,
+          condition         TEXT NOT NULL DEFAULT 'normal'
+                              CHECK (condition IN ('normal','defective')),
+          notes             TEXT,
+          created_at        TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+        )
+      `);
+      adapter.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS exchange_items (
+          id                TEXT PRIMARY KEY,
+          return_order_id   TEXT NOT NULL,
+          category          TEXT,
+          manufacturer      TEXT NOT NULL DEFAULT '',
+          model_name        TEXT NOT NULL DEFAULT '',
+          spec              TEXT NOT NULL DEFAULT '',
+          quantity          INTEGER NOT NULL DEFAULT 0,
+          sale_price        REAL NOT NULL DEFAULT 0,
+          total_price       REAL NOT NULL DEFAULT 0,
+          notes             TEXT,
+          created_at        TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+        )
+      `);
+      adapter.sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_return_items_order ON return_items(return_order_id)`);
+      adapter.sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_exchange_items_order ON exchange_items(return_order_id)`);
+      adapter.sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_return_orders_date ON return_orders(received_at)`);
+    }
+    console.log('[Migration] return_orders / return_items / exchange_items 테이블 확인 완료');
+  } catch (err) {
+    console.log('[Migration] returns2:', err.message);
+  }
+}
+
+// ── Outbound 주문/항목 테이블 마이그레이션 ──────────────────────
+async function migrateOutbound2(adapter) {
+  try {
+    if (adapter._isPg) {
+      await adapter.runAsync(`
+        CREATE TABLE IF NOT EXISTS outbound_orders (
+          id              TEXT PRIMARY KEY,
+          order_date      TEXT NOT NULL,
+          sales_vendor_id TEXT,
+          vendor_name     TEXT,
+          tax_type        TEXT NOT NULL DEFAULT 'none',
+          total_price     REAL NOT NULL DEFAULT 0,
+          notes           TEXT,
+          created_at      TEXT NOT NULL DEFAULT NOW(),
+          created_by      TEXT,
+          updated_at      TEXT,
+          updated_by      TEXT,
+          is_deleted      INTEGER NOT NULL DEFAULT 0,
+          deleted_at      TEXT
+        )
+      `);
+      await adapter.runAsync(`
+        CREATE TABLE IF NOT EXISTS outbound_items (
+          id                  TEXT PRIMARY KEY,
+          order_id            TEXT NOT NULL,
+          category            TEXT,
+          manufacturer        TEXT NOT NULL DEFAULT '',
+          model_name          TEXT NOT NULL DEFAULT '',
+          spec                TEXT,
+          quantity            INTEGER NOT NULL DEFAULT 0,
+          sale_price          REAL NOT NULL DEFAULT 0,
+          tax_amount          REAL NOT NULL DEFAULT 0,
+          total_price         REAL NOT NULL DEFAULT 0,
+          avg_purchase_price  REAL NOT NULL DEFAULT 0,
+          profit_per_unit     REAL NOT NULL DEFAULT 0,
+          total_profit        REAL NOT NULL DEFAULT 0,
+          notes               TEXT,
+          created_at          TEXT NOT NULL DEFAULT NOW(),
+          created_by          TEXT,
+          is_deleted          INTEGER NOT NULL DEFAULT 0,
+          deleted_at          TEXT
+        )
+      `);
+    } else {
+      adapter.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS outbound_orders (
+          id              TEXT PRIMARY KEY,
+          order_date      TEXT NOT NULL,
+          sales_vendor_id TEXT,
+          vendor_name     TEXT,
+          tax_type        TEXT NOT NULL DEFAULT 'none',
+          total_price     REAL NOT NULL DEFAULT 0,
+          notes           TEXT,
+          created_at      TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+          created_by      TEXT,
+          updated_at      TEXT,
+          updated_by      TEXT,
+          is_deleted      INTEGER NOT NULL DEFAULT 0,
+          deleted_at      TEXT
+        )
+      `);
+      adapter.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS outbound_items (
+          id                  TEXT PRIMARY KEY,
+          order_id            TEXT NOT NULL,
+          category            TEXT,
+          manufacturer        TEXT NOT NULL DEFAULT '',
+          model_name          TEXT NOT NULL DEFAULT '',
+          spec                TEXT,
+          quantity            INTEGER NOT NULL DEFAULT 0,
+          sale_price          REAL NOT NULL DEFAULT 0,
+          tax_amount          REAL NOT NULL DEFAULT 0,
+          total_price         REAL NOT NULL DEFAULT 0,
+          avg_purchase_price  REAL NOT NULL DEFAULT 0,
+          profit_per_unit     REAL NOT NULL DEFAULT 0,
+          total_profit        REAL NOT NULL DEFAULT 0,
+          notes               TEXT,
+          created_at          TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+          created_by          TEXT,
+          is_deleted          INTEGER NOT NULL DEFAULT 0,
+          deleted_at          TEXT
+        )
+      `);
+      adapter.sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_ob_items_order ON outbound_items(order_id)`);
+      adapter.sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_ob_orders_date ON outbound_orders(order_date)`);
+    }
+    console.log('[Migration] outbound_orders / outbound_items 테이블 확인 완료');
+  } catch (err) {
+    console.log('[Migration] outbound2:', err.message);
   }
 }
 
@@ -433,6 +726,10 @@ async function initDB() {
   await runMigrations(db);
   await migrateInbound(db);
   await migrateInventory(db);
+  await migrateOutbound2(db);
+  await migrateCompanyInfo(db);
+  await migrateInventory2(db);
+  await migrateReturns2(db);
   await seedAdmin(db);
   await seedTestAccounts(db);
   await seedVendors(db);

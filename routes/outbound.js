@@ -4,145 +4,321 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { getDB, nowStr } = require('../db/database');
 const auth  = require('../middleware/auth');
-const { writeAuditLog, moveToTrash } = require('../middleware/audit');
+const { writeAuditLog } = require('../middleware/audit');
 
-// GET /api/outbound  ── editor 이상
+// ── Helper: 주문 목록 + 아이템 조회 ─────────────────────────────
+async function fetchOrdersWithItems(db, where = 'o.is_deleted = 0', params = []) {
+  const orders = await db.allAsync(`
+    SELECT o.*, sv.company_name AS vendor_name_resolved,
+           u1.name AS created_by_name, u2.name AS updated_by_name
+    FROM outbound_orders o
+    LEFT JOIN sales_vendors sv ON o.sales_vendor_id = sv.id
+    LEFT JOIN users u1 ON o.created_by = u1.id
+    LEFT JOIN users u2 ON o.updated_by = u2.id
+    WHERE ${where}
+    ORDER BY o.order_date DESC, o.created_at DESC
+  `, params);
+  if (!orders.length) return [];
+
+  const ids = orders.map(o => o.id);
+  const items = await db.allAsync(
+    `SELECT * FROM outbound_items WHERE is_deleted = 0 AND order_id IN (${ids.map(() => '?').join(',')}) ORDER BY created_at`,
+    ids
+  );
+
+  const itemMap = {};
+  items.forEach(it => {
+    if (!itemMap[it.order_id]) itemMap[it.order_id] = [];
+    itemMap[it.order_id].push(it);
+  });
+
+  return orders.map(o => {
+    const orderItems = itemMap[o.id] || [];
+    const summary = {};
+    orderItems.forEach(it => {
+      const k = it.category || it.manufacturer || '기타';
+      summary[k] = (summary[k] || 0) + it.quantity;
+    });
+    return {
+      ...o,
+      vendor_name: o.vendor_name || o.vendor_name_resolved,
+      items: orderItems,
+      item_count: orderItems.length,
+      summary,
+    };
+  });
+}
+
+// GET /api/outbound — all orders with items + summary
 router.get('/', auth('editor'), async (req, res) => {
   try {
-    const db   = getDB();
-    const rows = await db.allAsync(
-      `SELECT o.*, v.company_name AS vendor_name
-       FROM outbound o LEFT JOIN vendors v ON o.vendor_id = v.id
-       WHERE o.is_deleted = 0
-       ORDER BY o.outbound_date DESC, o.created_at DESC`
-    );
-    res.json(rows);
+    const db = getDB();
+    const orders = await fetchOrdersWithItems(db);
+    res.json(orders);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/outbound/:id
+// GET /api/outbound/:id — single order with items
 router.get('/:id', auth('editor'), async (req, res) => {
   try {
-    const db  = getDB();
-    const row = await db.getAsync(
-      `SELECT o.*, v.company_name AS vendor_name
-       FROM outbound o LEFT JOIN vendors v ON o.vendor_id = v.id
-       WHERE o.id = ? AND o.is_deleted = 0`, [req.params.id]
-    );
-    if (!row) return res.status(404).json({ error: '출고 내역을 찾을 수 없습니다.' });
-    res.json(row);
+    const db = getDB();
+    const orders = await fetchOrdersWithItems(db, 'o.is_deleted = 0 AND o.id = ?', [req.params.id]);
+    if (!orders.length) return res.status(404).json({ error: '출고 내역을 찾을 수 없습니다.' });
+    res.json(orders[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/outbound
+// POST /api/outbound — create order + items, deduct inventory
 router.post('/', auth('editor'), async (req, res) => {
   try {
-    const { outbound_date, category, manufacturer, model_name, quantity, sale_price, vendor_id } = req.body;
-    if (!manufacturer || !model_name || !quantity || !sale_price || !outbound_date)
-      return res.status(400).json({ error: '필수 항목을 모두 입력하세요.' });
+    const db = getDB();
+    const { order_date, sales_vendor_id, vendor_name, tax_type, notes, items } = req.body;
 
-    const db  = getDB();
-    const inv = await db.getAsync(
-      'SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ?',
-      [manufacturer, model_name]
-    );
-    if (!inv || inv.current_stock < Number(quantity))
-      return res.status(400).json({ error: '재고가 부족합니다.' });
+    if (!order_date) return res.status(400).json({ error: '출고일은 필수입니다.' });
+    if (!Array.isArray(items) || !items.length)
+      return res.status(400).json({ error: '출고 항목을 1개 이상 입력하세요.' });
 
-    const avgPrice    = inv.avg_purchase_price;
-    const totalPrice  = Number(quantity) * Number(sale_price);
-    const profitUnit  = Number(sale_price) - avgPrice;
-    const totalProfit = profitUnit * Number(quantity);
-    const id          = uuidv4();
-    const n           = nowStr();
+    // Validate items and check stock
+    for (const it of items) {
+      if (!it.manufacturer || !it.model_name || !(it.quantity > 0))
+        return res.status(400).json({ error: '브랜드, 모델명, 수량은 필수입니다.' });
+
+      const inv = await db.getAsync(
+        `SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ? AND spec = ?`,
+        [it.manufacturer, it.model_name, it.spec || '']
+      ) || await db.getAsync(
+        `SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ?`,
+        [it.manufacturer, it.model_name]
+      );
+      if (!inv || inv.current_stock < Number(it.quantity)) {
+        return res.status(400).json({
+          error: `재고 부족: ${it.manufacturer} ${it.model_name} (현재재고: ${inv ? inv.current_stock : 0}개)`
+        });
+      }
+      it._inv = inv;
+    }
+
+    const orderId = uuidv4();
+    const n = nowStr();
+    const taxT = (tax_type === '10') ? '10' : 'none';
+
+    let orderTotal = 0;
+    const itemRows = items.map(it => {
+      const inv = it._inv;
+      const qty = Number(it.quantity);
+      const salePrice = Number(it.sale_price) || 0;
+      const taxRate = taxT === '10' ? 0.1 : 0;
+      const taxAmt = Math.round(qty * salePrice * taxRate);
+      const rowTotal = qty * salePrice + taxAmt;
+      const avgPrice = inv.avg_purchase_price || 0;
+      const profitUnit = salePrice - avgPrice;
+      const totalProfit = profitUnit * qty;
+      orderTotal += rowTotal;
+      return {
+        id: uuidv4(),
+        order_id: orderId,
+        category: it.category || null,
+        manufacturer: it.manufacturer,
+        model_name: it.model_name,
+        spec: it.spec || '',
+        quantity: qty,
+        sale_price: salePrice,
+        tax_amount: taxAmt,
+        total_price: rowTotal,
+        avg_purchase_price: avgPrice,
+        profit_per_unit: profitUnit,
+        total_profit: totalProfit,
+        notes: it.notes || null,
+        inv_id: inv.id,
+      };
+    });
 
     await db.runAsync(
-      `INSERT INTO outbound
-         (id, outbound_date, category, manufacturer, model_name, quantity, sale_price,
-          total_price, vendor_id, avg_purchase_price, profit_per_unit, total_profit, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, outbound_date, category || null, manufacturer, model_name,
-       quantity, sale_price, totalPrice, vendor_id || null,
-       avgPrice, profitUnit, totalProfit, n, req.user.id]
+      `INSERT INTO outbound_orders
+         (id, order_date, sales_vendor_id, vendor_name, tax_type, total_price, notes, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [orderId, order_date, sales_vendor_id || null, vendor_name || null, taxT,
+       orderTotal, notes || null, n, req.user.id]
     );
 
-    await db.runAsync(
-      `UPDATE inventory
-       SET current_stock = current_stock - ?, total_outbound = total_outbound + ?, updated_at = ?
-       WHERE id = ?`,
-      [quantity, quantity, n, inv.id]
-    );
+    for (const row of itemRows) {
+      await db.runAsync(
+        `INSERT INTO outbound_items
+           (id, order_id, category, manufacturer, model_name, spec, quantity, sale_price,
+            tax_amount, total_price, avg_purchase_price, profit_per_unit, total_profit, notes, created_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [row.id, row.order_id, row.category, row.manufacturer, row.model_name, row.spec,
+         row.quantity, row.sale_price, row.tax_amount, row.total_price,
+         row.avg_purchase_price, row.profit_per_unit, row.total_profit, row.notes, n, req.user.id]
+      );
 
-    const created = await db.getAsync('SELECT * FROM outbound WHERE id = ?', [id]);
-    await writeAuditLog('outbound', id, 'create', null, created, req.user.id);
+      await db.runAsync(
+        `UPDATE inventory SET current_stock = current_stock - ?, normal_stock = normal_stock - ?,
+         total_outbound = total_outbound + ?, updated_at = ? WHERE id = ?`,
+        [row.quantity, row.quantity, row.quantity, n, row.inv_id]
+      );
+    }
+
+    const [created] = await fetchOrdersWithItems(db, 'o.is_deleted = 0 AND o.id = ?', [orderId]);
+    await writeAuditLog('outbound_orders', orderId, 'create', null, created, req.user.id);
     res.status(201).json(created);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PUT /api/outbound/:id
+// PUT /api/outbound/:id — replace items (restore old stock, check+deduct new stock)
 router.put('/:id', auth('editor'), async (req, res) => {
   try {
-    const db  = getDB();
-    const old = await db.getAsync(
-      'SELECT * FROM outbound WHERE id = ? AND is_deleted = 0', [req.params.id]
-    );
+    const db = getDB();
+    const [old] = await fetchOrdersWithItems(db, 'o.is_deleted = 0 AND o.id = ?', [req.params.id]);
     if (!old) return res.status(404).json({ error: '출고 내역을 찾을 수 없습니다.' });
 
-    const { outbound_date, category, manufacturer, model_name, quantity, sale_price, vendor_id } = req.body;
-    const newQty    = quantity   !== undefined ? Number(quantity)   : old.quantity;
-    const newPrice  = sale_price !== undefined ? Number(sale_price) : old.sale_price;
-    const newTotal  = newQty * newPrice;
-    const profitU   = newPrice - old.avg_purchase_price;
-    const profitT   = profitU * newQty;
-    const n         = nowStr();
+    const { order_date, sales_vendor_id, vendor_name, tax_type, notes, items } = req.body;
 
-    await db.runAsync(
-      `UPDATE outbound
-       SET outbound_date=?, category=?, manufacturer=?, model_name=?, quantity=?,
-           sale_price=?, total_price=?, vendor_id=?, profit_per_unit=?,
-           total_profit=?, updated_at=?, updated_by=?
-       WHERE id=?`,
-      [outbound_date ?? old.outbound_date, category ?? old.category,
-       manufacturer ?? old.manufacturer, model_name ?? old.model_name,
-       newQty, newPrice, newTotal, vendor_id ?? old.vendor_id,
-       profitU, profitT, n, req.user.id, req.params.id]
-    );
+    if (!Array.isArray(items) || !items.length)
+      return res.status(400).json({ error: '출고 항목을 1개 이상 입력하세요.' });
 
-    const qtyDiff = newQty - old.quantity;
-    if (qtyDiff !== 0) {
+    const n = nowStr();
+    const taxT = (tax_type === '10') ? '10' : 'none';
+
+    // Restore old stock
+    for (const oldItem of old.items) {
       const inv = await db.getAsync(
-        'SELECT id FROM inventory WHERE manufacturer = ? AND model_name = ?',
-        [old.manufacturer, old.model_name]
+        `SELECT id FROM inventory WHERE manufacturer = ? AND model_name = ? AND spec = ?`,
+        [oldItem.manufacturer, oldItem.model_name, oldItem.spec || '']
+      ) || await db.getAsync(
+        `SELECT id FROM inventory WHERE manufacturer = ? AND model_name = ?`,
+        [oldItem.manufacturer, oldItem.model_name]
       );
       if (inv) {
         await db.runAsync(
-          'UPDATE inventory SET current_stock = current_stock - ?, total_outbound = total_outbound + ?, updated_at = ? WHERE id = ?',
-          [qtyDiff, qtyDiff, n, inv.id]
+          `UPDATE inventory SET current_stock = current_stock + ?, normal_stock = normal_stock + ?,
+           total_outbound = total_outbound - ?, updated_at = ? WHERE id = ?`,
+          [oldItem.quantity, oldItem.quantity, oldItem.quantity, n, inv.id]
         );
       }
     }
 
-    const updated = await db.getAsync('SELECT * FROM outbound WHERE id = ?', [req.params.id]);
-    await writeAuditLog('outbound', req.params.id, 'update', old, updated, req.user.id);
+    // Validate new items and check stock
+    for (const it of items) {
+      if (!it.manufacturer || !it.model_name || !(it.quantity > 0))
+        return res.status(400).json({ error: '브랜드, 모델명, 수량은 필수입니다.' });
+
+      const inv = await db.getAsync(
+        `SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ? AND spec = ?`,
+        [it.manufacturer, it.model_name, it.spec || '']
+      ) || await db.getAsync(
+        `SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ?`,
+        [it.manufacturer, it.model_name]
+      );
+      if (!inv || inv.current_stock < Number(it.quantity)) {
+        // Rollback: restore old stock already applied above — we need to reverse
+        for (const oldItem of old.items) {
+          const ri = await db.getAsync(
+            `SELECT id FROM inventory WHERE manufacturer = ? AND model_name = ?`,
+            [oldItem.manufacturer, oldItem.model_name]
+          );
+          if (ri) {
+            await db.runAsync(
+              `UPDATE inventory SET current_stock = current_stock - ?, normal_stock = normal_stock - ?,
+               total_outbound = total_outbound + ?, updated_at = ? WHERE id = ?`,
+              [oldItem.quantity, oldItem.quantity, oldItem.quantity, n, ri.id]
+            );
+          }
+        }
+        return res.status(400).json({
+          error: `재고 부족: ${it.manufacturer} ${it.model_name} (현재재고: ${inv ? inv.current_stock : 0}개)`
+        });
+      }
+      it._inv = inv;
+    }
+
+    // Soft-delete old items
+    await db.runAsync(
+      `UPDATE outbound_items SET is_deleted = 1, deleted_at = ? WHERE order_id = ? AND is_deleted = 0`,
+      [n, req.params.id]
+    );
+
+    let orderTotal = 0;
+    for (const it of items) {
+      const inv = it._inv;
+      const qty = Number(it.quantity);
+      const salePrice = Number(it.sale_price) || 0;
+      const taxRate = taxT === '10' ? 0.1 : 0;
+      const taxAmt = Math.round(qty * salePrice * taxRate);
+      const rowTotal = qty * salePrice + taxAmt;
+      const avgPrice = inv.avg_purchase_price || 0;
+      const profitUnit = salePrice - avgPrice;
+      const totalProfit = profitUnit * qty;
+      orderTotal += rowTotal;
+
+      await db.runAsync(
+        `INSERT INTO outbound_items
+           (id, order_id, category, manufacturer, model_name, spec, quantity, sale_price,
+            tax_amount, total_price, avg_purchase_price, profit_per_unit, total_profit, notes, created_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [uuidv4(), req.params.id, it.category || null, it.manufacturer, it.model_name, it.spec || '',
+         qty, salePrice, taxAmt, rowTotal, avgPrice, profitUnit, totalProfit, it.notes || null, n, req.user.id]
+      );
+
+      await db.runAsync(
+        `UPDATE inventory SET current_stock = current_stock - ?, normal_stock = normal_stock - ?,
+         total_outbound = total_outbound + ?, updated_at = ? WHERE id = ?`,
+        [qty, qty, qty, n, inv.id]
+      );
+    }
+
+    await db.runAsync(
+      `UPDATE outbound_orders SET order_date=?, sales_vendor_id=?, vendor_name=?, tax_type=?,
+       total_price=?, notes=?, updated_at=?, updated_by=? WHERE id=?`,
+      [order_date || old.order_date, sales_vendor_id !== undefined ? (sales_vendor_id || null) : old.sales_vendor_id,
+       vendor_name !== undefined ? (vendor_name || null) : old.vendor_name,
+       taxT, orderTotal, notes !== undefined ? (notes || null) : old.notes,
+       n, req.user.id, req.params.id]
+    );
+
+    const [updated] = await fetchOrdersWithItems(db, 'o.is_deleted = 0 AND o.id = ?', [req.params.id]);
+    await writeAuditLog('outbound_orders', req.params.id, 'update', old, updated, req.user.id);
     res.json(updated);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE /api/outbound/:id  ── admin만
-router.delete('/:id', auth('admin'), async (req, res) => {
+// DELETE /api/outbound/:id — soft delete + restore stock
+router.delete('/:id', auth('editor'), async (req, res) => {
   try {
-    const db  = getDB();
-    const row = await db.getAsync(
-      'SELECT * FROM outbound WHERE id = ? AND is_deleted = 0', [req.params.id]
-    );
-    if (!row) return res.status(404).json({ error: '출고 내역을 찾을 수 없습니다.' });
+    const db = getDB();
+    const [order] = await fetchOrdersWithItems(db, 'o.is_deleted = 0 AND o.id = ?', [req.params.id]);
+    if (!order) return res.status(404).json({ error: '출고 내역을 찾을 수 없습니다.' });
+
+    const n = nowStr();
+
+    // Restore stock for each item
+    for (const it of order.items) {
+      const inv = await db.getAsync(
+        `SELECT id FROM inventory WHERE manufacturer = ? AND model_name = ? AND spec = ?`,
+        [it.manufacturer, it.model_name, it.spec || '']
+      ) || await db.getAsync(
+        `SELECT id FROM inventory WHERE manufacturer = ? AND model_name = ?`,
+        [it.manufacturer, it.model_name]
+      );
+      if (inv) {
+        await db.runAsync(
+          `UPDATE inventory SET current_stock = current_stock + ?, normal_stock = normal_stock + ?,
+           total_outbound = total_outbound - ?, updated_at = ? WHERE id = ?`,
+          [it.quantity, it.quantity, it.quantity, n, inv.id]
+        );
+      }
+    }
 
     await db.runAsync(
-      'UPDATE outbound SET is_deleted = 1, deleted_at = ? WHERE id = ?',
-      [nowStr(), req.params.id]
+      `UPDATE outbound_items SET is_deleted = 1, deleted_at = ? WHERE order_id = ? AND is_deleted = 0`,
+      [n, req.params.id]
     );
-    await moveToTrash('outbound', req.params.id, req.user.id);
-    await writeAuditLog('outbound', req.params.id, 'delete', row, null, req.user.id);
+    await db.runAsync(
+      `UPDATE outbound_orders SET is_deleted = 1, deleted_at = ? WHERE id = ?`,
+      [n, req.params.id]
+    );
+
+    await writeAuditLog('outbound_orders', req.params.id, 'delete', order, null, req.user.id);
     res.json({ message: '삭제되었습니다.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

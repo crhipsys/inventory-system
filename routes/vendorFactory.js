@@ -58,7 +58,7 @@ function makeVendorRouter(tableName) {
       const {
         company_name, business_number, phone,
         registered_address, delivery_address, same_address,
-        notes, remarks,
+        notes, remarks, contact_person, name,
         bank_name, account_number, account_holder, is_important,
       } = req.body;
 
@@ -79,10 +79,10 @@ function makeVendorRouter(tableName) {
       const del = same_address ? (registered_address || null) : (delivery_address || null);
       const accDigits = (account_number || '').replace(/\D/g, '') || null;
 
-      const extraCols = isSales ? ', bank_name, account_number, account_holder, is_important' : '';
-      const extraPlaceholders = isSales ? ', ?, ?, ?, ?' : '';
+      const extraCols = isSales ? ', contact_person, name, bank_name, account_number, account_holder, is_important' : '';
+      const extraPlaceholders = isSales ? ', ?, ?, ?, ?, ?, ?' : '';
       const extraArgs = isSales
-        ? [bank_name?.trim() || null, accDigits, account_holder?.trim() || null, is_important ? 1 : 0]
+        ? [contact_person?.trim() || null, name?.trim() || null, bank_name?.trim() || null, accDigits, account_holder?.trim() || null, is_important ? 1 : 0]
         : [];
 
       await db.runAsync(
@@ -120,7 +120,7 @@ function makeVendorRouter(tableName) {
       const {
         company_name, business_number, phone,
         registered_address, delivery_address, same_address,
-        notes, remarks,
+        notes, remarks, contact_person, name,
         bank_name, account_number, account_holder, is_important,
       } = req.body;
 
@@ -147,8 +147,10 @@ function makeVendorRouter(tableName) {
       const accDigits = account_number !== undefined
         ? (account_number || '').replace(/\D/g, '') || null : null;
 
-      const extraSet  = isSales ? ', bank_name=?, account_number=?, account_holder=?, is_important=?' : '';
+      const extraSet  = isSales ? ', contact_person=?, name=?, bank_name=?, account_number=?, account_holder=?, is_important=?' : '';
       const extraArgs = isSales ? [
+        contact_person !== undefined ? (contact_person?.trim() || null) : old.contact_person,
+        name           !== undefined ? (name?.trim()           || null) : old.name,
         bank_name    !== undefined ? (bank_name?.trim()    || null) : old.bank_name,
         account_number !== undefined ? accDigits : old.account_number,
         account_holder !== undefined ? (account_holder?.trim() || null) : old.account_holder,

@@ -19,9 +19,9 @@ const ROLE_CLASS = {
 
 // 역할별 접근 가능 페이지
 const PAGE_ACCESS = {
-  admin:  ['dashboard','inventory','inbound','outbound','returns','purchase-vendors','sales-vendors','sales','users'],
-  editor: ['dashboard','inventory','inbound','outbound','returns','purchase-vendors','sales-vendors','sales'],
-  viewer: ['dashboard','inventory'],
+  admin:  ['dashboard','inventory','inbound','outbound','returns','purchase-vendors','sales-vendors','sales','users','company'],
+  editor: ['dashboard','inventory','inbound','outbound','returns','purchase-vendors','sales-vendors','sales','company'],
+  viewer: ['dashboard','inventory','company'],
 };
 
 // ══════════════════════════════════════════════
@@ -46,13 +46,14 @@ const API = {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
 
-    // 401 → 자동 로그아웃
-    if (res.status === 401) {
+    const data = await res.json().catch(() => ({}));
+
+    // 401 → 로그인 요청이 아닌 경우에만 자동 로그아웃
+    if (res.status === 401 && !path.endsWith('/auth/login')) {
       logout();
       throw new Error('세션이 만료되었습니다. 다시 로그인하세요.');
     }
 
-    const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `오류가 발생했습니다. (${res.status})`);
     return data;
   },
@@ -110,17 +111,21 @@ function showPage(name) {
     outbound: '출고 관리', returns: '반품/불량',
     'purchase-vendors': '매입거래처 관리',
     'sales-vendors':    '출고거래처 관리',
-    sales: '매출/수익', users: '사용자 관리',
+    sales: '매출/수익', users: '사용자 관리', company: '회사 정보',
   };
   document.getElementById('page-title').textContent = titles[name] || name;
 
   // 페이지 로드 함수 호출
   const loaders = {
     dashboard: loadDashboard,
+    inventory: () => loadInventory(),
     users:     loadUsers,
     'purchase-vendors': () => loadVendors('purchase'),
     'sales-vendors':    () => loadVendors('sales'),
     inbound:            () => loadInboundList(),
+    outbound:           () => loadOutboundList(),
+    returns:            () => loadReturnsList(),
+    company:            () => loadCompanyInfo(),
   };
   if (loaders[name]) loaders[name]();
 }
@@ -348,8 +353,8 @@ async function loadDashboard() {
         API.get('/inbound'),
         API.get('/outbound'),
       ]);
-      const todayIn  = inbounds.filter(r => r.inbound_date  === today).reduce((s,r) => s + r.quantity, 0);
-      const todayOut = outbounds.filter(r => r.outbound_date === today).reduce((s,r) => s + r.quantity, 0);
+      const todayIn  = inbounds.filter(r => r.inbound_date === today).reduce((s,r) => s + r.quantity, 0);
+      const todayOut = outbounds.filter(r => r.order_date === today).reduce((s,r) => s + (r.items||[]).reduce((ss,it) => ss + it.quantity, 0), 0);
       document.getElementById('st-in').textContent  = todayIn.toLocaleString();
       document.getElementById('st-out').textContent = todayOut.toLocaleString();
     } catch { /* 무시 */ }
@@ -559,14 +564,17 @@ function renderVendorTable(list) {
     : list;
 
   if (!sorted.length) {
-    tbody.innerHTML = `<tr><td colspan="9" class="empty">등록된 거래처가 없습니다.</td></tr>`;
+    const colspan = isSales ? '10' : '9';
+    tbody.innerHTML = `<tr><td colspan="${colspan}" class="empty">등록된 거래처가 없습니다.</td></tr>`;
     return;
   }
   tbody.innerHTML = sorted.map(v => {
-    const starMark = (isSales && v.is_important) ? '<span class="v-star-mark">★</span> ' : '';
+    const starMark  = (isSales && v.is_important) ? '<span class="v-star-mark">★</span> ' : '';
+    const nameCell  = isSales ? `<td>${escHtml(v.name || '-')}</td>` : '';
     return `
       <tr class="vendor-row" onclick="openVendorDetail('${v.id}')">
         <td>${starMark}${escHtml(v.company_name)}</td>
+        ${nameCell}
         <td>${fmtBizNum(v.business_number)}</td>
         <td>${fmtPhone(v.phone)}</td>
         <td class="cell-addr" title="${escHtml(v.registered_address || '')}">${escHtml(truncate(v.registered_address))}</td>
@@ -612,6 +620,7 @@ window.openVendorDetail = async function(id) {
 
     const isSales = _currentVendorType === 'sales';
     document.getElementById('vdd-title').textContent      = v.company_name;
+    document.getElementById('vdd-name').textContent       = v.name    || '-';
     document.getElementById('vdd-biz').textContent        = fmtBizNum(v.business_number) || '-';
     document.getElementById('vdd-phone').textContent      = fmtPhone(v.phone) || '-';
     document.getElementById('vdd-reg-addr').textContent   = v.registered_address || '-';
@@ -689,6 +698,7 @@ function openDetailEditMode() {
   const phoneFmt = fmtPhone(v.phone);
   document.getElementById('vde-id').value          = v.id;
   document.getElementById('vde-company').value     = v.company_name || '';
+  document.getElementById('vde-name').value        = v.name || '';
   document.getElementById('vde-biz').value         = bizFmt   === '-' ? '' : bizFmt;
   document.getElementById('vde-phone').value       = phoneFmt === '-' ? '' : phoneFmt;
   document.getElementById('vde-reg-addr').value    = v.registered_address || '';
@@ -741,6 +751,7 @@ async function saveVendorDetail() {
 
   // 출고거래처 전용 필드
   if (_currentVendorType === 'sales') {
+    body.name            = document.getElementById('vde-name').value.trim()  || null;
     body.is_important    = document.getElementById('vde-is-important').value === '1';
     body.bank_name       = document.getElementById('vde-bank-name').value    || null;
     body.account_number  = document.getElementById('vde-account-number').value.replace(/\D/g, '') || null;
@@ -798,6 +809,7 @@ async function saveVendor() {
 
   // 출고거래처 전용 필드
   if (_currentVendorType === 'sales') {
+    body.name           = document.getElementById('v-name').value.trim()  || null;
     body.is_important   = document.getElementById('v-is-important').value === '1';
     body.bank_name      = document.getElementById('v-bank-name').value    || null;
     body.account_number = document.getElementById('v-account-number').value.replace(/\D/g, '') || null;
