@@ -75,12 +75,13 @@ function slApplyFilter() {
 
 // ── 탭 카운트 업데이트 ───────────────────────────────────────────
 function slUpdateTabCounts() {
-  const counts = { all: 0, normal: 0, return_deducted: 0, exchange: 0 };
+  const counts = { all: 0, normal: 0, unpaid: 0, return_deducted: 0, exchange: 0 };
   _slAll.forEach(r => {
     counts.all++;
-    if (r.sale_type === 'normal')           counts.normal++;
+    if (r.sale_type === 'normal')               counts.normal++;
+    else if (r.sale_type === 'unpaid')          counts.unpaid++;
     else if (r.sale_type === 'return_deducted') counts.return_deducted++;
-    else if (r.sale_type === 'exchange')    counts.exchange++;
+    else if (r.sale_type === 'exchange')        counts.exchange++;
   });
   // 검색어 적용 후 카운트 (탭 필터 제외)
   const { cat, brand, model, vendor } = _slSearch;
@@ -95,9 +96,10 @@ function slUpdateTabCounts() {
     if (vendorL && !(r.vendor_name || '').toLowerCase().includes(vendorL)) return false;
     return true;
   });
-  const fc = { all: filtered.length, normal: 0, return_deducted: 0, exchange: 0 };
+  const fc = { all: filtered.length, normal: 0, unpaid: 0, return_deducted: 0, exchange: 0 };
   filtered.forEach(r => {
     if (r.sale_type === 'normal')               fc.normal++;
+    else if (r.sale_type === 'unpaid')          fc.unpaid++;
     else if (r.sale_type === 'return_deducted') fc.return_deducted++;
     else if (r.sale_type === 'exchange')        fc.exchange++;
   });
@@ -105,6 +107,7 @@ function slUpdateTabCounts() {
   const el = id => document.getElementById(id);
   if (el('sl-cnt-all'))    el('sl-cnt-all').textContent    = fc.all;
   if (el('sl-cnt-normal')) el('sl-cnt-normal').textContent = fc.normal;
+  if (el('sl-cnt-unpaid')) el('sl-cnt-unpaid').textContent = fc.unpaid;
   if (el('sl-cnt-return')) el('sl-cnt-return').textContent = fc.return_deducted;
   if (el('sl-cnt-exchange')) el('sl-cnt-exchange').textContent = fc.exchange;
 }
@@ -149,6 +152,7 @@ function slRenderTable() {
 }
 
 function slTypeLabel(type) {
+  if (type === 'unpaid')          return '<span class="sl-type-badge sl-type-unpaid">⚠ 미입금</span>';
   if (type === 'return_deducted') return '<span class="sl-type-badge sl-type-return">🔄 반품차감</span>';
   if (type === 'exchange')        return '<span class="sl-type-badge sl-type-exchange">🔄 교환</span>';
   return '<span class="sl-type-badge sl-type-normal">일반판매</span>';

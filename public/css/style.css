@@ -665,6 +665,9 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .ib-detail-bulk-btn[data-status="pending"]:hover   { border-color: #868e96; color: #343a40; background: #f1f3f5; }
 .ib-detail-bulk-btn[data-status="completed"]:hover { border-color: #2f9e44; color: #1b5e20; background: #ebfbee; }
 .ib-detail-bulk-btn[data-status="priority"]:hover  { border-color: #f59f00; color: #856404; background: #fff9db; }
+.ib-detail-bulk-btn.active[data-status="pending"]   { background: #e9ecef; border-color: #868e96; color: #343a40; }
+.ib-detail-bulk-btn.active[data-status="completed"] { background: #d3f9d8; border-color: #2f9e44; color: #1b5e20; }
+.ib-detail-bulk-btn.active[data-status="priority"]  { background: #fff3cd; border-color: #f59f00; color: #856404; }
 
 /* 엑셀/직접입력 탭 컨텐츠 */
 .ib-tab-content { margin-top: .75rem; }
@@ -937,6 +940,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 }
 .ob-vendor-item:last-child { border-bottom: none; }
 .ob-vendor-item:hover { background: var(--gray-50); }
+.ob-vendor-unreg { color: var(--primary); font-size: .82rem; border-top: 1px dashed var(--gray-200); }
 .ob-new-vendor-badge {
   padding: .5rem .75rem; cursor: pointer; font-size: .82rem;
   color: #1971c2; background: #e7f5ff; border-top: 1px solid #bac8ff;
@@ -1048,9 +1052,20 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 /* 출고건 연동 리스트 박스 */
 .rt-outbound-list-box {
   border: 1px solid var(--gray-300); border-radius: 6px;
-  max-height: 220px; overflow-y: auto; background: #fff;
+  max-height: 300px; overflow-y: auto; background: #fff;
   margin-top: .35rem;
 }
+.rt-ob-filter-bar {
+  display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+  padding: .5rem .75rem; background: var(--gray-50);
+  border-bottom: 1px solid var(--gray-200); position: sticky; top: 0; z-index: 1;
+}
+.rt-ob-filter-label { font-size: .78rem; color: var(--gray-600); white-space: nowrap; }
+.rt-ob-date-inp {
+  border: 1px solid var(--gray-300); border-radius: 4px;
+  padding: .2rem .4rem; font-size: .8rem; width: 130px;
+}
+.rt-ob-loading { padding: .5rem .75rem; font-size: .85rem; color: var(--gray-500); }
 .rt-ob-item {
   display: flex; gap: .75rem; align-items: center;
   padding: .5rem .75rem; cursor: pointer; font-size: .85rem;
@@ -1368,10 +1383,19 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .sl-table tbody tr:hover { background: var(--gray-50); }
 .sl-table td.empty { text-align: center; color: var(--gray-400); padding: 2rem; }
 
-/* ── 행 유형별 왼쪽 컬러 강조 ── */
-.sl-row.sl-type-return_deducted { border-left: 3px solid #74c0fc; }
-.sl-row.sl-type-exchange        { border-left: 3px solid #f783ac; }
-.sl-row.sl-type-normal          { border-left: 3px solid transparent; }
+/* ── 행 유형별 배경색 강조 ── */
+.sl-row.sl-type-return_deducted { border-left: 3px solid #e03131; background: #fff5f5; color: #c92a2a; }
+.sl-row.sl-type-return_deducted td { color: #c92a2a; }
+.sl-row.sl-type-exchange        { border-left: 3px solid #f59f00; background: #fffbe6; }
+.sl-row.sl-type-exchange td     { color: #856404; }
+.sl-row.sl-type-normal          { border-left: 3px solid #2f9e44; background: #ebfbee; }
+.sl-row.sl-type-normal td       { color: #1b5e20; }
+.sl-row.sl-type-unpaid          { border-left: 3px solid #e8590c; background: #fff4e6; }
+.sl-row.sl-type-unpaid td       { color: #c05621; }
+
+/* ── 출고 카드 미입금 ── */
+.ob-card-unpaid                 { border-left: 3px solid #e8590c !important; background: #fff4e6; }
+.ob-unpaid-badge                { background: #ffe8cc; color: #c05621; font-weight: 700; }
 
 /* ── 셀 스타일 ── */
 .sl-date   { color: var(--gray-600); font-size: .78rem; }
@@ -1399,9 +1423,10 @@ textarea.form-control { resize: vertical; min-height: 70px; }
   display: inline-block; font-size: .72rem; border-radius: 99px;
   padding: .15rem .5rem; font-weight: 600; white-space: nowrap;
 }
-.sl-type-normal   { background: #e9ecef; color: var(--gray-600); }
-.sl-type-return   { background: #e7f5ff; color: #1971c2; }
-.sl-type-exchange { background: #fff0f6; color: #c2255c; }
+.sl-type-normal   { background: #d3f9d8; color: #1b5e20; }
+.sl-type-unpaid   { background: #ffe8cc; color: #c05621; }
+.sl-type-return   { background: #ffe3e3; color: #c92a2a; }
+.sl-type-exchange { background: #fff3cd; color: #856404; }
 
 /* ── 우선등록 뱃지 ── */
 .sl-priority-badge {

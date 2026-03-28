@@ -27,7 +27,7 @@ router.get('/items', auth('editor'), async (req, res) => {
          oi.is_priority_stock,
          oi.notes AS item_notes,
          oo.order_date, oo.vendor_name, oo.tax_type,
-         oo.exchange_return_id,
+         oo.exchange_return_id, oo.payment_status,
          COALESCE(ri_agg.returned_qty, 0)  AS returned_qty,
          COALESCE(ri_agg.has_exchange, 0)  AS has_exchange,
          COALESCE(ri_agg.has_return,   0)  AS has_return
@@ -84,6 +84,21 @@ router.get('/items', auth('editor'), async (req, res) => {
       let saleType;
       if (r.has_return && returnedQty > 0) saleType = 'return_deducted';
       else saleType = 'normal';
+
+      // 반품차감: 반품된 수량을 음수로, 순수익도 음수(환불)로 표시
+      if (saleType === 'return_deducted') {
+        return {
+          ...r,
+          returned_qty:     returnedQty,
+          net_quantity:     -returnedQty,
+          net_total_price:  -(returnedQty * (r.sale_price || 0)),
+          net_total_profit: -((r.profit_per_unit || 0) * returnedQty),
+          sale_type:        saleType,
+        };
+      }
+
+      // 미입금인 경우 sale_type을 'unpaid'로 표시 (매출은 유지)
+      if (r.payment_status === 'unpaid') saleType = 'unpaid';
 
       return {
         ...r,

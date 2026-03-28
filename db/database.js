@@ -453,6 +453,48 @@ async function migrateReturns2(adapter) {
   }
 }
 
+// ── OutboundPaymentStatus 마이그레이션 (outbound_orders.payment_status 추가) ─
+async function migrateOutboundPaymentStatus(adapter) {
+  try {
+    if (adapter._isPg) {
+      await adapter.runAsync(
+        `ALTER TABLE outbound_orders ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'paid'`
+      );
+    } else {
+      const existing = adapter.sqlite
+        .prepare(`PRAGMA table_info(outbound_orders)`).all()
+        .map(r => r.name);
+      if (!existing.includes('payment_status')) {
+        adapter.sqlite.exec(`ALTER TABLE outbound_orders ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'paid'`);
+      }
+    }
+    console.log('[Migration] outbound_orders.payment_status 컬럼 확인 완료');
+  } catch (err) {
+    console.log('[Migration] migrateOutboundPaymentStatus:', err.message);
+  }
+}
+
+// ── ReturnItems 마이그레이션 (return_items.sale_price 추가) ─────────────────
+async function migrateReturnItemsSalePrice(adapter) {
+  try {
+    if (adapter._isPg) {
+      await adapter.runAsync(
+        `ALTER TABLE return_items ADD COLUMN IF NOT EXISTS sale_price REAL NOT NULL DEFAULT 0`
+      );
+    } else {
+      const existing = adapter.sqlite
+        .prepare(`PRAGMA table_info(return_items)`).all()
+        .map(r => r.name);
+      if (!existing.includes('sale_price')) {
+        adapter.sqlite.exec(`ALTER TABLE return_items ADD COLUMN sale_price REAL NOT NULL DEFAULT 0`);
+      }
+    }
+    console.log('[Migration] return_items.sale_price 컬럼 확인 완료');
+  } catch (err) {
+    console.log('[Migration] migrateReturnItemsSalePrice:', err.message);
+  }
+}
+
 // ── ExchangeOutbound 마이그레이션 (outbound_orders.exchange_return_id 추가) ─
 async function migrateExchangeOutbound(adapter) {
   try {
@@ -844,6 +886,8 @@ async function initDB() {
   await migrateReturns2(db);
   await migrateSales8(db);
   await migrateExchangeOutbound(db);
+  await migrateReturnItemsSalePrice(db);
+  await migrateOutboundPaymentStatus(db);
   await migrateUsersUsername(db);
   await seedAdmin(db);
   await seedTestAccounts(db);

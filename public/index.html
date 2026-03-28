@@ -697,6 +697,7 @@
               <button class="btn btn-ghost" id="btn-ob-back-detail">← 목록으로</button>
               <div style="flex:1"></div>
               <button class="btn btn-ghost" id="btn-ob-statement">거래명세서</button>
+              <button class="btn btn-warning" id="btn-ob-unpaid">미입금</button>
               <button class="btn btn-primary" id="btn-ob-edit">수정</button>
               <button class="btn btn-danger"  id="btn-ob-delete">삭제</button>
             </div>
@@ -830,7 +831,7 @@
                     <tr>
                       <th style="width:2rem" id="rt-ri-chk-th"></th>
                       <th>구분</th><th>브랜드</th><th>모델명</th><th>스펙</th>
-                      <th style="width:6rem">수량</th><th>비고</th>
+                      <th style="width:6rem">수량</th><th style="width:8rem">판매가</th><th>비고</th>
                       <th style="width:2.5rem"></th>
                     </tr>
                   </thead>
@@ -961,6 +962,7 @@
           <div class="tab-bar sl-tab-bar">
             <button class="tab-btn sl-tab-btn active" data-sltab="all">전체 <span class="tab-count" id="sl-cnt-all">0</span></button>
             <button class="tab-btn sl-tab-btn" data-sltab="normal">일반판매 <span class="tab-count" id="sl-cnt-normal">0</span></button>
+            <button class="tab-btn sl-tab-btn" data-sltab="unpaid">미입금 <span class="tab-count" id="sl-cnt-unpaid">0</span></button>
             <button class="tab-btn sl-tab-btn" data-sltab="return_deducted">반품차감 <span class="tab-count" id="sl-cnt-return">0</span></button>
             <button class="tab-btn sl-tab-btn" data-sltab="exchange">교환 <span class="tab-count" id="sl-cnt-exchange">0</span></button>
           </div>

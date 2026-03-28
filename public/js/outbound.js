@@ -86,19 +86,22 @@ function obRenderCards(list) {
       ? summaryParts.slice(0, 3).join(', ') + (summaryParts.length > 3 ? ' 외' : '')
       : `${r.item_count || 0}개 항목`;
 
-    const taxBadge = r.tax_type === '10'
+    const taxBadge    = r.tax_type === '10'
       ? '<span class="ob-cat-chip" style="background:#fff3bf;color:#e67700">부가세 10%</span>'
+      : '';
+    const unpaidBadge = r.payment_status === 'unpaid'
+      ? '<span class="ob-cat-chip ob-unpaid-badge">미입금</span>'
       : '';
 
     return `
-      <div class="ib-card ob-card" onclick="obOpenDetail('${r.id}')">
+      <div class="ib-card ob-card${r.payment_status === 'unpaid' ? ' ob-card-unpaid' : ''}" onclick="obOpenDetail('${r.id}')">
         <div class="ob-card-hd">
           <span class="ib-card-date">${r.order_date}</span>
           <span class="ib-card-vendor">${escHtml(r.vendor_name || '거래처 없음')}</span>
           <div style="flex:1"></div>
           <span class="ob-card-total">${obFmtMoney(r.total_price)}</span>
         </div>
-        <div class="ob-card-body">${summaryStr} ${taxBadge}</div>
+        <div class="ob-card-body">${summaryStr} ${taxBadge} ${unpaidBadge}</div>
         <div class="ob-card-ft">
           <span>항목 <b>${r.item_count}개</b></span>
         </div>
@@ -219,6 +222,31 @@ function obRenderDetail(order) {
   const isEditor = currentUser?.role === 'editor' || isAdmin;
   document.getElementById('btn-ob-edit').style.display   = isEditor ? '' : 'none';
   document.getElementById('btn-ob-delete').style.display = isEditor ? '' : 'none';
+
+  // 미입금 버튼 상태
+  const unpaidBtn = document.getElementById('btn-ob-unpaid');
+  if (unpaidBtn && isEditor) {
+    const isUnpaid = order.payment_status === 'unpaid';
+    unpaidBtn.textContent = isUnpaid ? '입금완료' : '미입금';
+    unpaidBtn.className   = isUnpaid ? 'btn btn-success' : 'btn btn-warning';
+    unpaidBtn.onclick = () => obTogglePaymentStatus(order.id, isUnpaid ? 'paid' : 'unpaid');
+  } else if (unpaidBtn) {
+    unpaidBtn.style.display = 'none';
+  }
+}
+
+async function obTogglePaymentStatus(id, newStatus) {
+  const label = newStatus === 'unpaid' ? '미입금' : '입금완료';
+  if (!confirm(`이 출고건을 "${label}"으로 변경하시겠습니까?`)) return;
+  try {
+    const updated = await API.patch(`/outbound/${id}/payment-status`, { status: newStatus });
+    _obCurrentOrder = updated;
+    // 목록 캐시 업데이트
+    const idx = _obOrders.findIndex(o => o.id === id);
+    if (idx >= 0) _obOrders[idx] = { ..._obOrders[idx], payment_status: newStatus };
+    obRenderDetail(updated);
+    toast(`"${label}"으로 변경되었습니다.`, 'success');
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 // ══════════════════════════════════════════════
@@ -602,6 +630,12 @@ async function obSave() {
   const vendorIdVal = document.getElementById('ob-vendor-id')?.value?.trim()    || '';
   const notes       = document.getElementById('ob-notes')?.value?.trim()        || '';
 
+  if (!vendorInput) {
+    toast('거래처명을 입력하세요.', 'error');
+    document.getElementById('ob-vendor-input')?.focus();
+    return;
+  }
+
   // 항목 수집
   const itemRows = Array.from(document.querySelectorAll('#ob-items-tbody tr'));
   const items = [];
@@ -708,6 +742,8 @@ function obStatementHtml(order, company) {
           <tr><td>주소</td><td>${escHtml(company?.address || '')}</td></tr>
           <tr><td>대표자</td><td>${escHtml(company?.representative || '')}</td></tr>
           <tr><td>전화번호</td><td>${fmtPhone(company?.phone) || ''}</td></tr>
+          ${company?.bank_name || company?.account_number ? `<tr><td>은행</td><td>${escHtml(company?.bank_name || '')}</td></tr>` : ''}
+          ${company?.account_number ? `<tr><td>계좌번호</td><td>${escHtml(company?.account_number || '')}${company?.account_holder ? ` (${escHtml(company.account_holder)})` : ''}</td></tr>` : ''}
         </table>
       </div>
       <div class="stmt-party">
@@ -796,7 +832,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('ob-model-dropdown')?.classList.add('hidden');
     obShowSubpage('list');
   });
-  document.getElementById('btn-ob-back-detail')?.addEventListener('click', () => obShowSubpage('list'));
+  document.getElementById('btn-ob-back-detail')?.addEventListener('click', () => { obShowSubpage('list'); obApplyFilter(); });
 
   // 저장
   document.getElementById('btn-ob-save')?.addEventListener('click', obSave);

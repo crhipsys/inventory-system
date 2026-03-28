@@ -332,7 +332,7 @@ async function ibDetailBulkStatus(order, status) {
   if (!ok) return;
 
   const sels = document.querySelectorAll('#ib-detail-content .ib-detail-status-sel');
-  let changed = 0;
+  const changedIds = new Set();
   for (const sel of sels) {
     if (sel.value === status) continue;
     try {
@@ -340,12 +340,26 @@ async function ibDetailBulkStatus(order, status) {
       sel.value = status;
       sel.dataset.prev = status;
       ibUpdateRowPriorityStyle(sel.closest('tr'), status);
-      changed++;
+      changedIds.add(sel.dataset.itemId);
     } catch (err) {
       toast(`일부 항목 변경 실패: ${err.message}`, 'error');
     }
   }
-  if (changed > 0) toast(`${changed}개 항목이 ${labels[status]}으로 변경됨`, 'success');
+  if (changedIds.size > 0) {
+    toast(`${changedIds.size}개 항목이 ${labels[status]}으로 변경됨`, 'success');
+    // _currentOrder 캐시 업데이트 (수정 폼 진입 시 정확한 상태 반영)
+    if (_currentOrder?.items) {
+      _currentOrder.items.forEach(item => {
+        if (changedIds.has(item.id)) item.status = status;
+      });
+    }
+    // 목록 카드 캐시 갱신 (목록으로 돌아갔을 때 최신 상태 반영)
+    loadInboundList();
+    // 버튼 active 표시
+    document.querySelectorAll('#ib-detail-content .ib-detail-bulk-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.status === status);
+    });
+  }
 }
 
 // ── 메모 ────────────────────────────────────

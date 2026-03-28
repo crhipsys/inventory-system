@@ -16,6 +16,7 @@ let _rtDropdownRow    = -1;
 let _rtModelInputTimer= null;
 let _rtLinkedOutbound = null;   // 연동된 출고건
 let _rtLinkedItems    = [];     // 연동된 출고 품목 (체크박스용)
+let _rtCurrentVendorId = null;  // 현재 선택된 거래처 ID (날짜 재조회용)
 let _rtFpStart        = null;
 let _rtFpEnd          = null;
 let _rtFpDate         = null;
@@ -238,8 +239,9 @@ function rtRenderDetail(order) {
       <td>${escHtml(it.model_name)}</td>
       <td>${escHtml(it.spec || '-')}</td>
       <td style="text-align:right">${it.quantity}</td>
+      <td style="text-align:right">${it.sale_price != null && it.sale_price !== '' ? Number(it.sale_price).toLocaleString() : '-'}</td>
       <td>${escHtml(it.notes || '-')}</td>
-    </tr>`).join('') || `<tr><td colspan="6" class="empty">품목 없음</td></tr>`;
+    </tr>`).join('') || `<tr><td colspan="7" class="empty">품목 없음</td></tr>`;
 
   // 교환 출고 품목 테이블
   let exchangeSection = '';
@@ -256,7 +258,17 @@ function rtRenderDetail(order) {
         <td>${escHtml(it.notes || '-')}</td>
       </tr>`).join('') || `<tr><td colspan="8" class="empty">품목 없음</td></tr>`;
 
-    const exTotal = (order.exchange_items || []).reduce((s,i) => s + (Number(i.total_price)||0), 0);
+    const exTotal      = (order.exchange_items || []).reduce((s,i) => s + (Number(i.total_price)||0), 0);
+    const returnTotal  = (order.return_items   || []).reduce((s,i) => s + (Number(i.sale_price)||0) * (Number(i.quantity)||0), 0);
+    const diff         = exTotal - returnTotal;
+    const diffLabel    = diff < 0
+      ? `<span style="color:#e03131">환불: ${Math.abs(diff).toLocaleString()}원</span>`
+      : diff > 0
+        ? `<span style="color:#1971c2">추가결제: ${diff.toLocaleString()}원</span>`
+        : '';
+    const totalLine    = diff !== 0
+      ? `교환 합계: ${exTotal.toLocaleString()}원 &nbsp;|&nbsp; 출고 판매가: ${returnTotal.toLocaleString()}원 &nbsp;→&nbsp; ${diffLabel}`
+      : `교환 합계: ${exTotal.toLocaleString()}원`;
 
     exchangeSection = `
       <div class="ib-header-card" style="margin-top:.75rem">
@@ -271,7 +283,7 @@ function rtRenderDetail(order) {
           </table>
         </div>
         <div style="text-align:right;padding:.5rem .25rem;font-size:.88rem;font-weight:600">
-          교환 합계: ${exTotal.toLocaleString()}원
+          ${totalLine}
         </div>
       </div>`;
   }
@@ -302,7 +314,7 @@ function rtRenderDetail(order) {
         <table class="tbl">
           <thead><tr>
             <th>구분</th><th>브랜드</th><th>모델명</th><th>스펙</th>
-            <th>수량</th><th>비고</th>
+            <th>수량</th><th>판매가</th><th>비고</th>
           </tr></thead>
           <tbody>${returnItemsHtml}</tbody>
         </table>
@@ -332,7 +344,11 @@ function rtRenderStatusActions(order) {
   let html = '';
 
   if (status === 'pending') {
-    html = `<button class="btn btn-primary" onclick="rtChangeStatus('${order.id}','testing')">테스트 시작</button>`;
+    if (type === 'exchange') {
+      html = `<button class="btn btn-primary" onclick="rtChangeStatus('${order.id}','exchange_pending')">🔄 교환출고대기</button>`;
+    } else {
+      html = `<button class="btn btn-primary" onclick="rtChangeStatus('${order.id}','testing')">테스트 시작</button>`;
+    }
   } else if (status === 'testing') {
     if (type === 'return') {
       html = `
@@ -517,6 +533,8 @@ function rtAddReturnRow(linked = false) {
     <td><input class="ib-inp rt-ri-spec"     type="text" placeholder="스펙" /></td>
     <td><input class="ib-inp rt-ri-qty"      type="number" min="1" placeholder="0"
       style="width:60px" data-max="" oninput="rtCheckReturnQty(${idx})" /></td>
+    <td><input class="ib-inp rt-ri-price"    type="number" min="0" placeholder="0"
+      style="width:90px;text-align:right" oninput="rtCalcExFooter()" /></td>
     <td><input class="ib-inp rt-ri-notes"    type="text" placeholder="비고" /></td>
     <td>
       <button type="button" class="btn btn-sm btn-ghost"
@@ -551,6 +569,7 @@ function rtFillReturnRow(idx, it) {
   row.querySelector('.rt-ri-model').value    = it.model_name   || '';
   row.querySelector('.rt-ri-spec').value     = it.spec         || '';
   row.querySelector('.rt-ri-qty').value      = it.quantity     || '';
+  row.querySelector('.rt-ri-price').value    = it.sale_price != null ? it.sale_price : '';
   row.querySelector('.rt-ri-notes').value    = it.notes        || '';
   if (it.outbound_qty) {
     row.querySelector('.rt-ri-qty').dataset.max = it.outbound_qty;
@@ -624,15 +643,33 @@ window.rtCalcExRow = function(idx) {
 };
 
 function rtCalcExFooter() {
-  const rows  = document.querySelectorAll('#rt-exchange-items-tbody tr');
-  let total = 0;
-  rows.forEach(row => {
+  const exRows = document.querySelectorAll('#rt-exchange-items-tbody tr');
+  let exTotal = 0;
+  exRows.forEach(row => {
     const qty   = Number(row.querySelector('.rt-ex-qty')?.value)   || 0;
     const price = Number(row.querySelector('.rt-ex-price')?.value) || 0;
-    total += qty * price;
+    exTotal += qty * price;
   });
+
+  // 반품 품목 판매가 합계
+  let returnTotal = 0;
+  document.querySelectorAll('#rt-return-items-tbody tr').forEach(row => {
+    const qty   = Number(row.querySelector('.rt-ri-qty')?.value)   || 0;
+    const price = Number(row.querySelector('.rt-ri-price')?.value) || 0;
+    returnTotal += qty * price;
+  });
+
+  const diff = exTotal - returnTotal;
   const el = document.getElementById('rt-ex-total');
-  if (el) el.textContent = total.toLocaleString() + '원';
+  if (!el) return;
+
+  if (returnTotal > 0 && diff < 0) {
+    el.innerHTML = `${exTotal.toLocaleString()}원 &nbsp;<span style="color:#e03131;font-weight:700">→ 환불: ${Math.abs(diff).toLocaleString()}원</span>`;
+  } else if (returnTotal > 0 && diff > 0) {
+    el.innerHTML = `${exTotal.toLocaleString()}원 &nbsp;<span style="color:#1971c2;font-weight:700">→ 추가결제: ${diff.toLocaleString()}원</span>`;
+  } else {
+    el.textContent = exTotal.toLocaleString() + '원';
+  }
 }
 
 function rtFillExRow(idx, it) {
@@ -749,15 +786,20 @@ window.rtFilterVendors = function(q) {
     (v.company_name || '').toLowerCase().includes(q.toLowerCase())
   ).slice(0, 10);
 
+  const unregOption = `<div class="ob-vendor-item ob-vendor-unreg" onmousedown="rtSelectVendor('novendor:${escHtml(q)}','${escHtml(q)}')">
+    🔍 "<b>${escHtml(q)}</b>" 미등록 거래처 출고건 검색
+  </div>`;
+
   if (matches.length) {
     dd.innerHTML = matches.map(v =>
       `<div class="ob-vendor-item" onmousedown="rtSelectVendor('${v.id}','${escHtml(v.company_name)}')">
         ${escHtml(v.company_name)}${v.name ? ` (${escHtml(v.name)})` : ''}
        </div>`
-    ).join('');
+    ).join('') + unregOption;
     dd.classList.remove('hidden');
   } else {
-    dd.classList.add('hidden');
+    dd.innerHTML = unregOption;
+    dd.classList.remove('hidden');
   }
 };
 
@@ -765,30 +807,64 @@ window.rtSelectVendor = function(id, name) {
   document.getElementById('rt-vendor-input').value = name;
   document.getElementById('rt-vendor-id').value    = id;
   document.getElementById('rt-vendor-dropdown')?.classList.add('hidden');
-  // 해당 거래처의 출고건 조회
-  rtLoadOutboundByVendor(id);
+  _rtCurrentVendorId = id;
+  // 해당 거래처의 출고건 조회 (날짜 필터 초기화)
+  rtLoadOutboundByVendor(id, '', '');
 };
 
 // ── 출고건 연동 ──────────────────────────────────
 
-async function rtLoadOutboundByVendor(vendorId) {
+async function rtLoadOutboundByVendor(vendorId, from, to) {
   const listBox = document.getElementById('rt-outbound-list');
   if (!listBox) return;
 
-  listBox.innerHTML = '<div style="padding:.5rem;font-size:.85rem;color:var(--gray-500)">조회 중...</div>';
+  // 날짜 값이 undefined이면 현재 입력 값 유지, 빈 문자열이면 초기화
+  const fromVal = from !== undefined ? from : (document.getElementById('rt-ob-from')?.value || '');
+  const toVal   = to   !== undefined ? to   : (document.getElementById('rt-ob-to')?.value   || '');
+
   listBox.classList.remove('hidden');
 
+  // 날짜 필터 바 항상 렌더 (조회 결과 위에)
+  const filterBar = `
+    <div class="rt-ob-filter-bar">
+      <span class="rt-ob-filter-label">날짜 범위</span>
+      <input type="date" id="rt-ob-from" class="rt-ob-date-inp" value="${fromVal}" placeholder="시작일" />
+      <span style="color:var(--gray-400)">~</span>
+      <input type="date" id="rt-ob-to"   class="rt-ob-date-inp" value="${toVal}"   placeholder="종료일" />
+      <button class="btn btn-sm btn-primary" onclick="rtReloadOutbound()">조회</button>
+      <button class="btn btn-sm btn-ghost"   onclick="rtReloadOutbound('clear')">전체</button>
+    </div>`;
+
+  listBox.innerHTML = filterBar + '<div class="rt-ob-loading">조회 중...</div>';
+
+  let apiUrl;
+  if (vendorId.startsWith('novendor:')) {
+    const name = vendorId.slice(9);
+    const qs = new URLSearchParams({ name: name });
+    if (fromVal) qs.set('from', fromVal);
+    if (toVal)   qs.set('to',   toVal);
+    apiUrl = `/returns/outbound-by-vendor/novendor?${qs}`;
+  } else {
+    const qs = new URLSearchParams();
+    if (fromVal) qs.set('from', fromVal);
+    if (toVal)   qs.set('to',   toVal);
+    apiUrl = `/returns/outbound-by-vendor/${vendorId}?${qs}`;
+  }
+
   try {
-    const orders = await API.get(`/returns/outbound-by-vendor/${vendorId}`);
+    const orders = await API.get(apiUrl);
+    const filterBarEl = listBox.querySelector('.rt-ob-filter-bar');
+    const filterHtml  = filterBarEl ? filterBarEl.outerHTML : filterBar;
+
     if (!orders.length) {
-      listBox.innerHTML = '<div style="padding:.5rem;font-size:.85rem;color:var(--gray-500)">해당 거래처의 출고건이 없습니다.</div>';
+      listBox.innerHTML = filterHtml +
+        '<div style="padding:.5rem;font-size:.85rem;color:var(--gray-500)">해당 기간에 출고건이 없습니다.</div>';
       return;
     }
 
-    listBox.innerHTML = `
+    listBox.innerHTML = filterHtml + `
       <div style="font-size:.82rem;color:var(--gray-500);padding:.35rem 0 .4rem">
-        출고건을 선택하면 품목이 자동으로 채워집니다.
-        <button class="btn btn-xs btn-ghost" onclick="rtClearLinkedOutbound()" style="margin-left:.5rem">연동 해제</button>
+        출고건을 선택하면 품목이 자동으로 채워집니다. (${orders.length}건)
       </div>
       ${orders.map(o => {
         const summary = (o.items || []).map(it =>
@@ -801,9 +877,20 @@ async function rtLoadOutboundByVendor(vendorId) {
         </div>`;
       }).join('')}`;
   } catch (err) {
-    listBox.innerHTML = `<div style="padding:.5rem;color:var(--danger);font-size:.85rem">${err.message}</div>`;
+    listBox.innerHTML = filterBar + `<div style="padding:.5rem;color:var(--danger);font-size:.85rem">${err.message}</div>`;
   }
 }
+
+window.rtReloadOutbound = function(action) {
+  if (!_rtCurrentVendorId) return;
+  if (action === 'clear') {
+    rtLoadOutboundByVendor(_rtCurrentVendorId, '', '');
+  } else {
+    const from = document.getElementById('rt-ob-from')?.value || '';
+    const to   = document.getElementById('rt-ob-to')?.value   || '';
+    rtLoadOutboundByVendor(_rtCurrentVendorId, from, to);
+  }
+};
 
 function rtLinkOutbound(order) {
   _rtLinkedOutbound = order;
@@ -823,7 +910,6 @@ function rtLinkOutbound(order) {
       <div class="rt-linked-info">
         🔗 연동: <b>${order.order_date}</b>
         ${escHtml(itemSummary)}${_rtLinkedItems.length > 3 ? ` 외 ${_rtLinkedItems.length-3}건` : ''}
-        <button class="btn btn-xs btn-ghost" onclick="rtClearLinkedOutbound()" style="margin-left:.5rem">해제</button>
       </div>`;
     linkedDisp.classList.remove('hidden');
   }
@@ -850,6 +936,7 @@ function rtLinkOutbound(order) {
       spec:        it.spec        || '',
       quantity:    it.quantity    || 0,
       outbound_qty:it.quantity    || 0,
+      sale_price:  it.sale_price  ?? '',
       notes:       '',
       outbound_item_id: it.id,
     });
@@ -912,6 +999,7 @@ async function rtSave() {
       model_name:  model,
       spec:        row.querySelector('.rt-ri-spec')?.value?.trim()    || '',
       quantity:    qty,
+      sale_price:  Number(row.querySelector('.rt-ri-price')?.value)   || 0,
       notes:       row.querySelector('.rt-ri-notes')?.value?.trim()   || null,
       outbound_item_id: row.dataset.outboundItemId || null,
     });

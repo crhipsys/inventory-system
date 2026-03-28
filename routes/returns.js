@@ -62,18 +62,37 @@ router.get('/', auth('editor'), async (req, res) => {
 router.get('/outbound-by-vendor/:vendorId', auth('editor'), async (req, res) => {
   try {
     const db = getDB();
-    const vid = req.params.vendorId;
+    const vid  = req.params.vendorId;
+    const from = req.query.from?.trim();
+    const to   = req.query.to?.trim();
+
+    // 날짜 조건 공통 빌더
+    let dateClause = '';
+    const dateParams = [];
+    if (from) { dateClause += ' AND order_date >= ?'; dateParams.push(from); }
+    if (to)   { dateClause += ' AND order_date <= ?'; dateParams.push(to); }
+
     let orders;
     if (vid === 'novendor') {
-      orders = await db.allAsync(
-        `SELECT * FROM outbound_orders WHERE sales_vendor_id IS NULL AND is_deleted = 0
-         ORDER BY order_date DESC LIMIT 50`
-      );
+      const nameFilter = req.query.name?.trim();
+      if (nameFilter) {
+        orders = await db.allAsync(
+          `SELECT * FROM outbound_orders WHERE sales_vendor_id IS NULL AND vendor_name = ? AND is_deleted = 0 AND (exchange_return_id IS NULL OR exchange_return_id = '')${dateClause}
+           ORDER BY order_date DESC LIMIT 200`,
+          [nameFilter, ...dateParams]
+        );
+      } else {
+        orders = await db.allAsync(
+          `SELECT * FROM outbound_orders WHERE sales_vendor_id IS NULL AND is_deleted = 0 AND (exchange_return_id IS NULL OR exchange_return_id = '')${dateClause}
+           ORDER BY order_date DESC LIMIT 200`,
+          dateParams
+        );
+      }
     } else {
       orders = await db.allAsync(
-        `SELECT * FROM outbound_orders WHERE sales_vendor_id = ? AND is_deleted = 0
-         ORDER BY order_date DESC LIMIT 50`,
-        [vid]
+        `SELECT * FROM outbound_orders WHERE sales_vendor_id = ? AND is_deleted = 0 AND (exchange_return_id IS NULL OR exchange_return_id = '')${dateClause}
+         ORDER BY order_date DESC LIMIT 200`,
+        [vid, ...dateParams]
       );
     }
     for (const o of orders) {
@@ -130,10 +149,11 @@ router.post('/', auth('editor'), async (req, res) => {
       if (!item.manufacturer || !item.model_name || !(Number(item.quantity) > 0)) continue;
       await db.runAsync(
         `INSERT INTO return_items
-           (id, return_order_id, outbound_item_id, category, manufacturer, model_name, spec, quantity, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, return_order_id, outbound_item_id, category, manufacturer, model_name, spec, quantity, sale_price, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [uuidv4(), id, item.outbound_item_id || null, item.category || null,
-         item.manufacturer, item.model_name, item.spec || '', Number(item.quantity), item.notes || null]
+         item.manufacturer, item.model_name, item.spec || '', Number(item.quantity),
+         Number(item.sale_price) || 0, item.notes || null]
       );
       const inv = await getInv(db, item.manufacturer, item.model_name, item.spec);
       if (inv) {
@@ -222,10 +242,11 @@ router.put('/:id', auth('editor'), async (req, res) => {
       if (!item.manufacturer || !item.model_name || !(Number(item.quantity) > 0)) continue;
       await db.runAsync(
         `INSERT INTO return_items
-           (id, return_order_id, outbound_item_id, category, manufacturer, model_name, spec, quantity, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, return_order_id, outbound_item_id, category, manufacturer, model_name, spec, quantity, sale_price, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [uuidv4(), req.params.id, item.outbound_item_id || null, item.category || null,
-         item.manufacturer, item.model_name, item.spec || '', Number(item.quantity), item.notes || null]
+         item.manufacturer, item.model_name, item.spec || '', Number(item.quantity),
+         Number(item.sale_price) || 0, item.notes || null]
       );
       const inv = await getInv(db, item.manufacturer, item.model_name, item.spec);
       if (inv) {
@@ -440,6 +461,24 @@ router.delete('/:id', auth('editor'), async (req, res) => {
             [item.quantity, n, inv.id]
           );
         }
+      }
+    }
+
+    // 교환완료로 생성된 출고 주문도 함께 삭제
+    if (order.status === 'exchange_done') {
+      const linkedOutbound = await db.getAsync(
+        `SELECT id FROM outbound_orders WHERE exchange_return_id = ? AND is_deleted = 0`,
+        [req.params.id]
+      );
+      if (linkedOutbound) {
+        await db.runAsync(
+          `UPDATE outbound_orders SET is_deleted = 1, deleted_at = ? WHERE id = ?`,
+          [n, linkedOutbound.id]
+        );
+        await db.runAsync(
+          `UPDATE outbound_items SET is_deleted = 1, deleted_at = ? WHERE order_id = ?`,
+          [n, linkedOutbound.id]
+        );
       }
     }
 

@@ -304,6 +304,24 @@ router.put('/:id', auth('editor'), async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// PATCH /api/outbound/:id/payment-status — 미입금/입금완료 토글
+router.patch('/:id/payment-status', auth('editor'), async (req, res) => {
+  try {
+    const db = getDB();
+    const { status } = req.body;
+    if (!['paid', 'unpaid'].includes(status))
+      return res.status(400).json({ error: '유효하지 않은 상태입니다.' });
+    const [order] = await fetchOrdersWithItems(db, 'o.is_deleted = 0 AND o.id = ?', [req.params.id]);
+    if (!order) return res.status(404).json({ error: '출고 내역을 찾을 수 없습니다.' });
+    await db.runAsync(
+      `UPDATE outbound_orders SET payment_status = ?, updated_at = ? WHERE id = ?`,
+      [status, nowStr(), req.params.id]
+    );
+    const [updated] = await fetchOrdersWithItems(db, 'o.is_deleted = 0 AND o.id = ?', [req.params.id]);
+    res.json(updated);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // DELETE /api/outbound/:id — soft delete + restore stock
 router.delete('/:id', auth('editor'), async (req, res) => {
   try {
