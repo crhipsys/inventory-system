@@ -77,12 +77,14 @@ async function loadReturnsList() {
 
 function rtInitDatePickers() {
   if (_rtFpStart) return; // 이미 초기화됨
+  const rtToday = new Date().toISOString().slice(0, 10);
   const commonOpts = {
     locale: 'ko', dateFormat: 'Y-m-d',
     onChange: () => rtApplyFilter(),
   };
-  _rtFpStart = flatpickr('#rt-date-start', { ...commonOpts, placeholder: '시작일' });
-  _rtFpEnd   = flatpickr('#rt-date-end',   { ...commonOpts, placeholder: '종료일' });
+  _rtFpStart = flatpickr('#rt-date-start', { ...commonOpts, defaultDate: rtToday, placeholder: '시작일' });
+  _rtFpEnd   = flatpickr('#rt-date-end',   { ...commonOpts, defaultDate: rtToday, placeholder: '종료일' });
+  rtApplyFilter();
 
   document.querySelectorAll('[data-rtrange]').forEach(btn => {
     btn.addEventListener('click', () => {

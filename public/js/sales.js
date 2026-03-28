@@ -26,9 +26,9 @@ function monthStart() {
 
 // ── 초기 진입 ────────────────────────────────────────────────────
 async function loadSalesList() {
-  // 기본 날짜 범위: 이번달
+  // 기본 날짜 범위: 오늘
   if (!_slFrom) {
-    _slFrom = monthStart();
+    _slFrom = todayStr();
     _slTo   = todayStr();
     const fromEl = document.getElementById('sl-from');
     const toEl   = document.getElementById('sl-to');

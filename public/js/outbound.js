@@ -870,12 +870,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 날짜 범위 flatpickr
   if (typeof flatpickr !== 'undefined') {
+    const obToday = new Date().toISOString().slice(0, 10);
     _obFpStart = flatpickr('#ob-date-start', {
-      locale: 'ko', dateFormat: 'Y-m-d', onChange: () => obApplyFilter(),
+      locale: 'ko', dateFormat: 'Y-m-d', defaultDate: obToday, onChange: () => obApplyFilter(),
     });
     _obFpEnd = flatpickr('#ob-date-end', {
-      locale: 'ko', dateFormat: 'Y-m-d', onChange: () => obApplyFilter(),
+      locale: 'ko', dateFormat: 'Y-m-d', defaultDate: obToday, onChange: () => obApplyFilter(),
     });
+    obApplyFilter();
   }
 
   // 거래처 인라인 검색

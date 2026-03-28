@@ -944,6 +944,7 @@ document.addEventListener('DOMContentLoaded', () => {
       locale: 'ko', dateFormat: 'Y-m-d', allowInput: true,
       onChange: () => { clearTimeout(_ibSearchTimer); _ibSearchTimer = setTimeout(ibApplyFilter, 200); },
     });
+    ibSetQuickRange('today');
   }
 
   // 빠른 날짜 선택 버튼

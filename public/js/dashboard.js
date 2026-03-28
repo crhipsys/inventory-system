@@ -263,28 +263,28 @@ function dbInitDatepickers() {
   if (_dbFpTo)   { _dbFpTo.destroy();   _dbFpTo   = null; }
 
   const today = dbTodayStr();
-  const start = dbMonthStart();
 
   _dbFpFrom = flatpickr('#db-from', {
-    locale: 'ko', dateFormat: 'Y-m-d', defaultDate: start,
+    locale: 'ko', dateFormat: 'Y-m-d', defaultDate: today,
   });
   _dbFpTo = flatpickr('#db-to', {
     locale: 'ko', dateFormat: 'Y-m-d', defaultDate: today,
   });
+  dbSearchRange();
 
   // 빠른 선택 버튼
   document.getElementById('btn-db-today')?.addEventListener('click', () => {
-    _dbFpFrom.setDate(today); _dbFpTo.setDate(today);
+    _dbFpFrom.setDate(dbTodayStr()); _dbFpTo.setDate(dbTodayStr()); dbSearchRange();
   });
   document.getElementById('btn-db-week')?.addEventListener('click', () => {
-    _dbFpFrom.setDate(dbWeekStart()); _dbFpTo.setDate(dbTodayStr());
+    _dbFpFrom.setDate(dbWeekStart()); _dbFpTo.setDate(dbTodayStr()); dbSearchRange();
   });
   document.getElementById('btn-db-month')?.addEventListener('click', () => {
-    _dbFpFrom.setDate(dbMonthStart()); _dbFpTo.setDate(dbTodayStr());
+    _dbFpFrom.setDate(dbMonthStart()); _dbFpTo.setDate(dbTodayStr()); dbSearchRange();
   });
   document.getElementById('btn-db-lastmonth')?.addEventListener('click', () => {
     const { start: s, end: e } = dbLastMonthRange();
-    _dbFpFrom.setDate(s); _dbFpTo.setDate(e);
+    _dbFpFrom.setDate(s); _dbFpTo.setDate(e); dbSearchRange();
   });
   document.getElementById('btn-db-search')?.addEventListener('click', dbSearchRange);
 }
