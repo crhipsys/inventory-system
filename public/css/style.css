@@ -1460,3 +1460,199 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 
 /* ── 뷰어 권한: 매입가·순수익 숨김 ── */
 body.viewer-mode .price-col { display: none !important; }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   대시보드
+══════════════════════════════════════════════════════════════════════════ */
+.db-wrap { padding: 1.2rem 1.4rem; max-width: 1400px; }
+
+/* 로딩 */
+.db-loading {
+  display: flex; align-items: center; justify-content: center;
+  gap: .8rem; padding: 4rem 0; color: var(--gray-600); font-size: .9rem;
+}
+.db-spinner {
+  width: 28px; height: 28px; border: 3px solid var(--gray-200);
+  border-top-color: var(--primary); border-radius: 50%;
+  animation: dbSpin .7s linear infinite;
+}
+.db-spinner-sm {
+  display: inline-block; width: 16px; height: 16px;
+  border: 2px solid var(--gray-200); border-top-color: var(--primary);
+  border-radius: 50%; animation: dbSpin .7s linear infinite; vertical-align: middle;
+}
+@keyframes dbSpin { to { transform: rotate(360deg); } }
+
+/* 뷰어: editor-only 숨김 */
+body.viewer-mode .db-editor-only { display: none !important; }
+
+/* ── ① KPI 카드 ─────────────────────────────────────────────────────────── */
+.db-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem; margin-bottom: 1.2rem;
+}
+.db-kpi-card {
+  background: #fff; border: 1px solid var(--gray-200);
+  border-radius: var(--radius); padding: 1.2rem 1.4rem;
+  box-shadow: var(--shadow); position: relative; overflow: hidden;
+}
+.db-kpi-card::before {
+  content: ''; position: absolute; top: 0; left: 0; width: 4px;
+  height: 100%; background: var(--primary);
+}
+.db-kpi-card.db-kpi-sales::before { background: var(--success); }
+.db-kpi-label {
+  font-size: .75rem; font-weight: 600; color: var(--gray-600);
+  text-transform: uppercase; letter-spacing: .04em; margin-bottom: .4rem;
+}
+.db-kpi-value {
+  font-size: 1.5rem; font-weight: 700; color: var(--text);
+  margin-bottom: .3rem; line-height: 1.2;
+}
+.db-kpi-diff { font-size: .85rem; font-weight: 600; min-height: 1.2em; }
+.db-kpi-sub  { font-size: .68rem; color: var(--gray-600); margin-top: .25rem; }
+
+.db-diff-up      { color: var(--success); }
+.db-diff-down    { color: var(--danger);  }
+.db-diff-neutral { color: var(--gray-600); }
+
+/* ── ② 차트 행 ──────────────────────────────────────────────────────────── */
+.db-charts-row {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 1rem; margin-bottom: 1.2rem;
+}
+.db-chart-card {
+  background: #fff; border: 1px solid var(--gray-200);
+  border-radius: var(--radius); padding: 1.2rem 1.4rem; box-shadow: var(--shadow);
+}
+.db-chart-title {
+  font-size: .82rem; font-weight: 700; color: var(--gray-800);
+  margin-bottom: .9rem;
+}
+.db-chart-wrap { height: 220px; position: relative; }
+
+/* ── ③ 날짜 검색 ────────────────────────────────────────────────────────── */
+.db-range-card {
+  background: #fff; border: 1px solid var(--gray-200);
+  border-radius: var(--radius); padding: 1.2rem 1.4rem;
+  box-shadow: var(--shadow); margin-bottom: 1.2rem;
+}
+.db-range-header {
+  font-size: .82rem; font-weight: 700; color: var(--gray-800); margin-bottom: .8rem;
+}
+.db-range-controls {
+  display: flex; align-items: center; flex-wrap: wrap; gap: .5rem;
+}
+.db-range-sep { color: var(--gray-600); font-weight: 500; }
+.db-range-loading {
+  padding: .8rem; color: var(--gray-600); font-size: .85rem;
+}
+.db-range-stats-grid {
+  display: flex; flex-wrap: wrap; gap: 0;
+  border: 1px solid var(--gray-200); border-radius: var(--radius);
+  margin-top: .9rem; overflow: hidden;
+}
+.db-rs-item {
+  flex: 1; min-width: 120px; padding: .9rem 1.1rem;
+  border-right: 1px solid var(--gray-200);
+  display: flex; flex-direction: column; gap: .25rem;
+}
+.db-rs-item:last-child { border-right: none; }
+.db-rs-label { font-size: .7rem; color: var(--gray-600); font-weight: 600; }
+.db-rs-val   { font-size: 1rem; font-weight: 700; color: var(--text); }
+
+/* TOP 5 */
+.db-top5 { margin-top: 1rem; }
+.db-top5-title {
+  font-size: .78rem; font-weight: 700; color: var(--gray-600);
+  margin-bottom: .5rem; text-transform: uppercase; letter-spacing: .04em;
+}
+.db-top-row {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .45rem .2rem; border-bottom: 1px solid var(--gray-100);
+  font-size: .85rem;
+}
+.db-top-row:last-child { border-bottom: none; }
+.db-top-rank {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--primary); color: #fff;
+  font-size: .7rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.db-top-row:nth-child(1) .db-top-rank { background: #f59f00; }
+.db-top-row:nth-child(2) .db-top-rank { background: #868e96; }
+.db-top-row:nth-child(3) .db-top-rank { background: #cd7f32; }
+.db-top-name { flex: 1; font-weight: 500; }
+.db-top-name em { font-style: normal; color: var(--gray-600); font-size: .8rem; }
+.db-top-qty  { color: var(--gray-600); font-size: .8rem; min-width: 45px; text-align: right; }
+.db-top-profit { font-weight: 700; min-width: 100px; text-align: right; }
+
+/* ── ④⑤ 하단 행 ────────────────────────────────────────────────────────── */
+.db-bottom-row {
+  display: grid; grid-template-columns: 340px 1fr;
+  gap: 1rem;
+}
+.db-status-card, .db-activity-card {
+  background: #fff; border: 1px solid var(--gray-200);
+  border-radius: var(--radius); padding: 1.2rem 1.4rem; box-shadow: var(--shadow);
+}
+.db-card-title {
+  font-size: .82rem; font-weight: 700; color: var(--gray-800);
+  margin-bottom: .9rem; padding-bottom: .5rem; border-bottom: 1px solid var(--gray-100);
+}
+.db-status-grid {
+  display: flex; flex-direction: column; gap: .1rem;
+}
+.db-stat-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: .5rem .2rem; border-bottom: 1px solid var(--gray-100);
+  font-size: .88rem;
+}
+.db-stat-item:last-child { border-bottom: none; }
+.db-stat-label { color: var(--gray-600); }
+.db-stat-val   { font-weight: 700; color: var(--text); }
+.db-val-warn   { color: var(--warn) !important; }
+.db-val-danger { color: var(--danger) !important; }
+
+/* 활동 */
+.db-activity-list { display: flex; flex-direction: column; gap: .1rem; }
+.db-act-row {
+  display: grid;
+  grid-template-columns: 80px 80px 42px 1fr 70px;
+  gap: .4rem; align-items: center;
+  padding: .5rem .2rem; border-bottom: 1px solid var(--gray-100);
+  font-size: .82rem;
+}
+.db-act-row:last-child { border-bottom: none; }
+.db-act-who    { font-weight: 600; color: var(--primary); }
+.db-act-menu   { color: var(--gray-700); }
+.db-act-action { font-size: .72rem; font-weight: 700; padding: .1rem .35rem;
+                 border-radius: 10px; text-align: center; }
+.db-act-create { background: #d3f9d8; color: #2f9e44; }
+.db-act-update { background: #dbe4ff; color: #3b5bdb; }
+.db-act-delete { background: #ffe3e3; color: #e03131; }
+.db-act-content { color: var(--gray-700); overflow: hidden; text-overflow: ellipsis;
+                  white-space: nowrap; }
+.db-act-time   { color: var(--gray-600); font-size: .75rem; text-align: right; }
+
+/* 수익 색상 */
+.db-profit-pos { color: var(--success); }
+.db-profit-neg { color: var(--danger);  }
+
+/* 반응형 */
+@media (max-width: 1200px) {
+  .db-kpi-grid     { grid-template-columns: repeat(2, 1fr); }
+  .db-bottom-row   { grid-template-columns: 1fr; }
+}
+@media (max-width: 800px) {
+  .db-charts-row   { grid-template-columns: 1fr; }
+  .db-kpi-grid     { grid-template-columns: repeat(2, 1fr); }
+  .db-act-row      { grid-template-columns: 70px 70px 38px 1fr; }
+  .db-act-time     { display: none; }
+}
+@media (max-width: 500px) {
+  .db-kpi-grid     { grid-template-columns: 1fr; }
+  .db-range-controls .btn { font-size: .75rem; }
+}

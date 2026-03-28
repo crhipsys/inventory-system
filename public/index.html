@@ -134,32 +134,122 @@
 
         <!-- 대시보드 -->
         <div id="page-dashboard" class="page active">
-          <div class="stat-grid" id="dash-stats">
-            <div class="stat-card">
-              <div class="stat-label">전체 재고 품목</div>
-              <div class="stat-value" id="st-items">-</div>
+          <div class="db-wrap">
+
+            <!-- 로딩 -->
+            <div id="db-loading" class="db-loading">
+              <div class="db-spinner"></div>
+              <span>데이터 불러오는 중...</span>
             </div>
-            <div class="stat-card">
-              <div class="stat-label">총 재고 수량</div>
-              <div class="stat-value" id="st-qty">-</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-label">오늘 입고</div>
-              <div class="stat-value" id="st-in">-</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-label">오늘 출고</div>
-              <div class="stat-value" id="st-out">-</div>
-            </div>
-            <div class="stat-card stat-warn">
-              <div class="stat-label">반품 검사대기</div>
-              <div class="stat-value" id="st-ret">-</div>
-            </div>
-            <div class="stat-card stat-danger">
-              <div class="stat-label">불량 재고</div>
-              <div class="stat-value" id="st-def">-</div>
-            </div>
-          </div>
+
+            <!-- 메인 콘텐츠 -->
+            <div id="db-content" class="hidden">
+
+              <!-- ① KPI 카드 (editor/admin only) -->
+              <div class="db-kpi-grid db-editor-only" id="db-kpi-grid">
+                <div class="db-kpi-card">
+                  <div class="db-kpi-label">오늘 순수익</div>
+                  <div class="db-kpi-value" id="db-kpi-today-val">—</div>
+                  <div class="db-kpi-diff"  id="db-kpi-today-diff"></div>
+                  <div class="db-kpi-sub">어제 대비</div>
+                </div>
+                <div class="db-kpi-card">
+                  <div class="db-kpi-label">이번주 순수익</div>
+                  <div class="db-kpi-value" id="db-kpi-week-val">—</div>
+                  <div class="db-kpi-diff"  id="db-kpi-week-diff"></div>
+                  <div class="db-kpi-sub">저번주 동기간 대비</div>
+                </div>
+                <div class="db-kpi-card">
+                  <div class="db-kpi-label">이번달 순수익</div>
+                  <div class="db-kpi-value" id="db-kpi-mprofit-val">—</div>
+                  <div class="db-kpi-diff"  id="db-kpi-mprofit-diff"></div>
+                  <div class="db-kpi-sub">저번달 동기간 대비</div>
+                </div>
+                <div class="db-kpi-card db-kpi-sales">
+                  <div class="db-kpi-label">이번달 매출</div>
+                  <div class="db-kpi-value" id="db-kpi-msales-val">—</div>
+                  <div class="db-kpi-diff"  id="db-kpi-msales-diff"></div>
+                  <div class="db-kpi-sub">저번달 동기간 대비</div>
+                </div>
+              </div>
+
+              <!-- ② 차트 행 (editor/admin only) -->
+              <div class="db-charts-row db-editor-only">
+                <div class="db-chart-card">
+                  <div class="db-chart-title">이번주 vs 저번주 순수익 비교</div>
+                  <div class="db-chart-wrap"><canvas id="db-chart-weekly"></canvas></div>
+                </div>
+                <div class="db-chart-card">
+                  <div class="db-chart-title">월별 순수익 추이 (최근 6개월)</div>
+                  <div class="db-chart-wrap"><canvas id="db-chart-monthly"></canvas></div>
+                </div>
+              </div>
+
+              <!-- ③ 날짜 검색 (editor/admin only) -->
+              <div class="db-range-card db-editor-only">
+                <div class="db-range-header">기간별 상세 조회</div>
+                <div class="db-range-controls">
+                  <input type="text" id="db-from" class="form-control" placeholder="시작일" style="width:130px">
+                  <span class="db-range-sep">~</span>
+                  <input type="text" id="db-to"   class="form-control" placeholder="종료일" style="width:130px">
+                  <button class="btn btn-ghost btn-sm" id="btn-db-today">오늘</button>
+                  <button class="btn btn-ghost btn-sm" id="btn-db-week">이번주</button>
+                  <button class="btn btn-ghost btn-sm" id="btn-db-month">이번달</button>
+                  <button class="btn btn-ghost btn-sm" id="btn-db-lastmonth">저번달</button>
+                  <button class="btn btn-primary btn-sm" id="btn-db-search">조회</button>
+                </div>
+                <div class="db-range-result hidden" id="db-range-result"></div>
+              </div>
+
+              <!-- ④⑤ 하단 행 -->
+              <div class="db-bottom-row">
+
+                <!-- 오늘 현황 -->
+                <div class="db-status-card">
+                  <div class="db-card-title">오늘 현황 요약</div>
+                  <div class="db-status-grid">
+                    <div class="db-stat-item db-editor-only">
+                      <span class="db-stat-label">오늘 입고</span>
+                      <span class="db-stat-val" id="db-s-inbound">—</span>
+                    </div>
+                    <div class="db-stat-item db-editor-only">
+                      <span class="db-stat-label">오늘 출고</span>
+                      <span class="db-stat-val" id="db-s-outbound">—</span>
+                    </div>
+                    <div class="db-stat-item db-editor-only">
+                      <span class="db-stat-label">오늘 반품/교환</span>
+                      <span class="db-stat-val" id="db-s-return">—</span>
+                    </div>
+                    <div class="db-stat-item">
+                      <span class="db-stat-label">전체 재고 품목</span>
+                      <span class="db-stat-val" id="db-s-stock">—</span>
+                    </div>
+                    <div class="db-stat-item">
+                      <span class="db-stat-label">불량/폐기/검사대기</span>
+                      <span class="db-stat-val db-val-warn" id="db-s-defective">—</span>
+                    </div>
+                    <div class="db-stat-item db-editor-only">
+                      <span class="db-stat-label">매입미완료</span>
+                      <span class="db-stat-val db-val-warn" id="db-s-pending">—</span>
+                    </div>
+                    <div class="db-stat-item db-admin-only">
+                      <span class="db-stat-label">승인대기 회원</span>
+                      <span class="db-stat-val db-val-danger" id="db-s-users">—</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 최근 활동 -->
+                <div class="db-activity-card">
+                  <div class="db-card-title">최근 활동 내역</div>
+                  <div class="db-activity-list" id="db-activity-list">
+                    <div class="empty">불러오는 중...</div>
+                  </div>
+                </div>
+
+              </div>
+            </div><!-- /db-content -->
+          </div><!-- /db-wrap -->
         </div>
 
         <!-- ══ 재고 현황 ══ -->
@@ -1647,7 +1737,9 @@
 <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ko.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="/js/app.js"></script>
+<script src="/js/dashboard.js"></script>
 <script src="/js/inventory.js"></script>
 <script src="/js/inbound.js"></script>
 <script src="/js/outbound.js"></script>

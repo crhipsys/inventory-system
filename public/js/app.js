@@ -345,40 +345,7 @@ document.querySelectorAll('.tab').forEach(btn => {
 //  대시보드
 // ══════════════════════════════════════════════
 async function loadDashboard() {
-  const today = new Date().toISOString().slice(0, 10);
-
-  try {
-    const inv = await API.get('/inventory');
-
-    const totalItems = inv.length;
-    const totalQty   = inv.reduce((s, r) => s + (r.current_stock || 0), 0);
-    const defStock   = inv.reduce((s, r) => s + (r.defective_stock || 0), 0);
-    const pendTest   = inv.reduce((s, r) => s + (r.pending_test || 0), 0);
-
-    document.getElementById('st-items').textContent = totalItems;
-    document.getElementById('st-qty').textContent   = totalQty.toLocaleString();
-    document.getElementById('st-def').textContent   = defStock.toLocaleString();
-    document.getElementById('st-ret').textContent   = pendTest.toLocaleString();
-  } catch {
-    // viewer: inventory만 접근 가능
-  }
-
-  // editor 이상만 입출고 집계
-  if (currentUser?.role !== 'viewer') {
-    try {
-      const [inbounds, outbounds] = await Promise.all([
-        API.get('/inbound'),
-        API.get('/outbound'),
-      ]);
-      const todayIn  = inbounds.filter(r => r.inbound_date === today).reduce((s,r) => s + r.quantity, 0);
-      const todayOut = outbounds.filter(r => r.order_date === today).reduce((s,r) => s + (r.items||[]).reduce((ss,it) => ss + it.quantity, 0), 0);
-      document.getElementById('st-in').textContent  = todayIn.toLocaleString();
-      document.getElementById('st-out').textContent = todayOut.toLocaleString();
-    } catch { /* 무시 */ }
-  } else {
-    document.getElementById('st-in').textContent  = '-';
-    document.getElementById('st-out').textContent = '-';
-  }
+  if (typeof dbLoad === 'function') await dbLoad();
 }
 
 // ══════════════════════════════════════════════
