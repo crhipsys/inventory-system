@@ -295,6 +295,9 @@ document.getElementById('form-register').addEventListener('submit', async (e) =>
 function initApp(user) {
   currentUser = user;
 
+  // 뷰어 권한: 매입가/순수익 숨김 모드
+  document.body.classList.toggle('viewer-mode', user.role === 'viewer');
+
   // 헤더/사이드바 사용자 정보
   document.getElementById('sb-user-name').textContent = user.name;
   document.getElementById('sb-user-role').innerHTML   = roleChip(user.role);

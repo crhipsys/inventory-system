@@ -1432,3 +1432,6 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .sl-sum-divider {
   width: 1px; background: var(--gray-200); align-self: stretch; margin: 0 .2rem;
 }
+
+/* ── 뷰어 권한: 매입가·순수익 숨김 ── */
+body.viewer-mode .price-col { display: none !important; }

@@ -169,7 +169,7 @@ function renderIbCards(list) {
           <div class="ib-card-badges">${statusBadges}</div>
         </div>
         <div class="ib-card-summary">${summaryText}</div>
-        <div class="ib-card-total">합계 <b>${total}원</b> &nbsp;·&nbsp; ${o.item_count}개 품목</div>
+        <div class="ib-card-total"><span class="price-col">합계 <b>${total}원</b> &nbsp;·&nbsp;</span>${o.item_count}개 품목</div>
       </div>
     `;
   }).join('');
@@ -208,8 +208,8 @@ function renderIbDetail(order) {
         <td>${escHtml(it.model_name)}</td>
         <td class="ib-td-spec">${escHtml(it.spec || '-')}</td>
         <td style="text-align:right">${Number(it.quantity).toLocaleString()}</td>
-        <td style="text-align:right">${Number(it.purchase_price).toLocaleString()}</td>
-        <td style="text-align:right">${Number(it.total_price).toLocaleString()}</td>
+        <td class="price-col" style="text-align:right">${Number(it.purchase_price).toLocaleString()}</td>
+        <td class="price-col" style="text-align:right">${Number(it.total_price).toLocaleString()}</td>
         <td><span class="ib-badge ${condCls}">${cond}</span></td>
         <td>${statusCell}</td>
         <td class="ib-td-notes">${escHtml(it.notes || '-')}</td>
@@ -260,14 +260,14 @@ function renderIbDetail(order) {
           <tr>
             <th>구분</th><th>브랜드</th><th>모델명</th><th>스펙</th>
             <th style="text-align:right">수량</th>
-            <th style="text-align:right">매입가</th>
-            <th style="text-align:right">합계</th>
+            <th class="price-col" style="text-align:right">매입가</th>
+            <th class="price-col" style="text-align:right">합계</th>
             <th>처리구분</th><th>매입상태</th><th>비고</th><th>이력</th>
           </tr>
         </thead>
         <tbody>${rows || '<tr><td colspan="11" class="empty">품목 없음</td></tr>'}</tbody>
         <tfoot>
-          <tr style="background:var(--gray-50);font-weight:700">
+          <tr class="price-col" style="background:var(--gray-50);font-weight:700">
             <td colspan="6" style="text-align:right;padding:.6rem 1rem">합계</td>
             <td style="text-align:right;padding:.6rem 1rem">${totalPrice.toLocaleString()}원</td>
             <td colspan="4"></td>

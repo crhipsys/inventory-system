@@ -139,9 +139,9 @@ function slRenderTable() {
         : r.quantity}</td>
       <td class="sl-num">${won(r.sale_price)}</td>
       <td class="sl-num">${won(r.net_total_price)}</td>
-      <td class="sl-num sl-avg-price">${won(r.avg_purchase_price)}</td>
-      <td class="sl-num ${profitUnitCls}">${won(r.profit_per_unit)}</td>
-      <td class="sl-num ${profitCls}">${won(r.net_total_profit)}</td>
+      <td class="sl-num sl-avg-price price-col">${won(r.avg_purchase_price)}</td>
+      <td class="sl-num ${profitUnitCls} price-col">${won(r.profit_per_unit)}</td>
+      <td class="sl-num ${profitCls} price-col">${won(r.net_total_profit)}</td>
       <td class="sl-vendor">${esc(r.vendor_name || '—')}</td>
       <td>${typeLabel}</td>
     </tr>`;
@@ -197,11 +197,12 @@ function slRenderSummary() {
 function slExportCsv() {
   if (!_slView.length) { alert('내보낼 데이터가 없습니다.'); return; }
 
+  const isViewer = currentUser?.role === 'viewer';
   const headers = [
     '출고날짜','구분','브랜드','모델명','스펙',
     '수량','반품수량','순판매수량',
     '판매가','판매가합계',
-    '평균매입가','순수익/개','순수익합계',
+    ...(isViewer ? [] : ['평균매입가','순수익/개','순수익합계']),
     '거래처','유형','우선등록재고'
   ];
 
@@ -216,9 +217,7 @@ function slExportCsv() {
     r.net_quantity,
     r.sale_price || 0,
     r.net_total_price || 0,
-    r.avg_purchase_price || 0,
-    r.profit_per_unit || 0,
-    r.net_total_profit || 0,
+    ...(isViewer ? [] : [r.avg_purchase_price || 0, r.profit_per_unit || 0, r.net_total_profit || 0]),
     r.vendor_name || '',
     r.sale_type === 'return_deducted' ? '반품차감'
       : r.sale_type === 'exchange'   ? '교환'

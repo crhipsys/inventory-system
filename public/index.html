@@ -231,7 +231,7 @@
                   <th>폐기재고</th>
                   <th>총입고</th>
                   <th>총출고</th>
-                  <th>평균매입가</th>
+                  <th class="price-col">평균매입가</th>
                   <th>최근거래처</th>
                   <th>비고</th>
                 </tr>
@@ -337,7 +337,7 @@
                   <button class="tab-btn" data-dtab="outbound">출고 이력</button>
                   <button class="tab-btn" data-dtab="returns">반품/교환</button>
                   <button class="tab-btn" data-dtab="adjustments">재고조정</button>
-                  <button class="tab-btn" data-dtab="avg_history">평균매입가</button>
+                  <button class="tab-btn price-col" data-dtab="avg_history">평균매입가</button>
                 </div>
                 <div id="inv-detail-content" class="inv-detail-content"></div>
               </div>
@@ -978,9 +978,9 @@
                   <th class="sl-num" style="min-width:50px">수량</th>
                   <th class="sl-num" style="min-width:90px">판매가</th>
                   <th class="sl-num" style="min-width:100px">판매가합계</th>
-                  <th class="sl-num" style="min-width:100px">평균매입가</th>
-                  <th class="sl-num" style="min-width:90px">순수익/개</th>
-                  <th class="sl-num" style="min-width:100px">순수익합계</th>
+                  <th class="sl-num price-col" style="min-width:100px">평균매입가</th>
+                  <th class="sl-num price-col" style="min-width:90px">순수익/개</th>
+                  <th class="sl-num price-col" style="min-width:100px">순수익합계</th>
                   <th style="min-width:90px">거래처</th>
                   <th style="min-width:80px">유형</th>
                 </tr>
@@ -1006,7 +1006,7 @@
               <span class="sl-sum-label">판매가합계</span>
               <span class="sl-sum-val sl-sum-sales" id="sl-sum-sales">—</span>
             </div>
-            <div class="sl-sum-item sl-sum-profit-item">
+            <div class="sl-sum-item sl-sum-profit-item price-col">
               <span class="sl-sum-label">순수익합계</span>
               <span class="sl-sum-val" id="sl-sum-profit">—</span>
             </div>

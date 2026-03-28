@@ -144,7 +144,7 @@ function invRenderTable(list) {
       <td>${numCell(r.disposal_stock, 'inv-dis-cell')}</td>
       <td>${numCell(r.total_inbound)}</td>
       <td>${numCell(r.total_outbound)}</td>
-      <td class="inv-price-cell">${invFmt(r.avg_purchase_price)}</td>
+      <td class="inv-price-cell price-col">${invFmt(r.avg_purchase_price)}</td>
       <td class="inv-vendor-cell">${escHtml(r.last_vendor || r.last_vendor_name || '')}</td>
       <td class="inv-notes-cell">${escHtml(r.notes || '')}</td>
     </tr>`;
@@ -200,12 +200,12 @@ function invDetailRenderTab(tab) {
   if (tab === 'inbound') {
     if (!d.inbound.length) { el.innerHTML = '<p class="empty">입고 이력 없음</p>'; return; }
     el.innerHTML = `<table class="data-table inv-hist-tbl">
-      <thead><tr><th>입고일</th><th>상태</th><th>수량</th><th>매입가</th><th>거래처</th><th>비고</th></tr></thead>
+      <thead><tr><th>입고일</th><th>상태</th><th>수량</th><th class="price-col">매입가</th><th>거래처</th><th>비고</th></tr></thead>
       <tbody>${d.inbound.map(r => `<tr>
         <td>${r.order_date || ''}</td>
         <td><span class="ib-badge ib-badge-${r.status}">${IB_STATUS_LABEL[r.status]||r.status}</span></td>
         <td>${invNum(r.quantity)}</td>
-        <td>${invFmt(r.purchase_price)}</td>
+        <td class="price-col">${invFmt(r.purchase_price)}</td>
         <td>${escHtml(r.vendor_name||'')}</td>
         <td>${escHtml(r.notes||'')}</td>
       </tr>`).join('')}</tbody>
@@ -249,7 +249,7 @@ function invDetailRenderTab(tab) {
       temp_purchase:'임의매입(임시)', confirm_purchase:'임의매입(확정)',
     };
     el.innerHTML = `<table class="data-table inv-hist-tbl">
-      <thead><tr><th>조정일</th><th>유형</th><th>수량</th><th>금액</th><th>사유</th><th>처리자</th></tr></thead>
+      <thead><tr><th>조정일</th><th>유형</th><th>수량</th><th class="price-col">금액</th><th>사유</th><th>처리자</th></tr></thead>
       <tbody>${d.adjustments.map(r => {
         const price = r.adjustment_type === 'temp_purchase' ? r.temp_price
                     : r.adjustment_type === 'confirm_purchase' ? r.confirmed_price : null;
@@ -258,7 +258,7 @@ function invDetailRenderTab(tab) {
           <td>${r.adjustment_date||''}</td>
           <td>${ADJ_LABEL[r.adjustment_type]||r.adjustment_type}${isTemp ? ' ⚠️' : ''}</td>
           <td>${invNum(r.quantity)}</td>
-          <td>${price != null ? invFmt(price) : '-'}</td>
+          <td class="price-col">${price != null ? invFmt(price) : '-'}</td>
           <td>${escHtml(r.reason||'')}</td>
           <td>${escHtml(r.performer_name||r.created_by||'')}</td>
         </tr>`;
@@ -420,24 +420,28 @@ function invExportExcel() {
   if (!window.XLSX) return toast('XLSX 라이브러리가 로드되지 않았습니다.', 'error');
   if (!_invFiltered.length) return toast('내보낼 데이터가 없습니다.', 'error');
 
-  const rows = _invFiltered.map(r => ({
-    '구분':          r.category || '',
-    '브랜드':        r.manufacturer || '',
-    '모델명':        r.model_name || '',
-    '스펙':          r.spec || '',
-    '현재재고':      r.current_stock || 0,
-    '매입완료재고':  r.completed_stock || 0,
-    '우선등록재고':  r.priority_stock || 0,
-    '매입미완료수량':r.pending_inbound_qty || 0,
-    '불량재고':      r.defective_stock || 0,
-    '폐기재고':      r.disposal_stock || 0,
-    '총입고':        r.total_inbound || 0,
-    '총출고':        r.total_outbound || 0,
-    '평균매입가':    r.avg_purchase_price || 0,
-    '최근거래처':    r.last_vendor || r.last_vendor_name || '',
-    '비고':          r.notes || '',
-    '임시매입포함':  (r.has_temp_purchase || 0) > 0 ? '⚠️' : '',
-  }));
+  const isViewer = currentUser?.role === 'viewer';
+  const rows = _invFiltered.map(r => {
+    const row = {
+      '구분':          r.category || '',
+      '브랜드':        r.manufacturer || '',
+      '모델명':        r.model_name || '',
+      '스펙':          r.spec || '',
+      '현재재고':      r.current_stock || 0,
+      '매입완료재고':  r.completed_stock || 0,
+      '우선등록재고':  r.priority_stock || 0,
+      '매입미완료수량':r.pending_inbound_qty || 0,
+      '불량재고':      r.defective_stock || 0,
+      '폐기재고':      r.disposal_stock || 0,
+      '총입고':        r.total_inbound || 0,
+      '총출고':        r.total_outbound || 0,
+      '최근거래처':    r.last_vendor || r.last_vendor_name || '',
+      '비고':          r.notes || '',
+      '임시매입포함':  (r.has_temp_purchase || 0) > 0 ? '⚠️' : '',
+    };
+    if (!isViewer) row['평균매입가'] = r.avg_purchase_price || 0;
+    return row;
+  });
 
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
