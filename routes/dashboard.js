@@ -117,10 +117,10 @@ router.get('/summary', auth('viewer'), async (req, res) => {
         [today]
       ),
       db.getAsync(
-        `SELECT COUNT(*) AS items,
-                COALESCE(SUM(defective_stock),0)  AS defective,
-                COALESCE(SUM(disposal_stock),0)   AS disposal,
-                COALESCE(SUM(pending_test),0)     AS pending_test
+        `SELECT
+           SUM(CASE WHEN condition_type='normal'    THEN 1 ELSE 0 END) AS items,
+           SUM(CASE WHEN condition_type='defective' AND current_stock>0 THEN 1 ELSE 0 END) AS defective,
+           SUM(CASE WHEN condition_type='disposal'  AND current_stock>0 THEN 1 ELSE 0 END) AS disposal
          FROM inventory`
       ),
       db.getAsync(
@@ -141,7 +141,7 @@ router.get('/summary', auth('viewer'), async (req, res) => {
       outbound_count:   todayOut.cnt,
       return_count:     todayRet.cnt,
       stock_items:      invRow.items,
-      defective_items:  (invRow.defective || 0) + (invRow.disposal || 0) + (invRow.pending_test || 0),
+      defective_items:  (invRow.defective || 0) + (invRow.disposal || 0),
       pending_purchase: pendPurch.cnt,
       pending_users:    pendingUsers,
     };

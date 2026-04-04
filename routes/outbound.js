@@ -49,6 +49,26 @@ async function fetchOrdersWithItems(db, where = 'o.is_deleted = 0', params = [])
   });
 }
 
+// GET /api/outbound/inventory-search — 재고 검색 (condition_type 분리)
+router.get('/inventory-search', auth('editor'), async (req, res) => {
+  try {
+    const db = getDB();
+    const rows = await db.allAsync(`
+      SELECT inv.*,
+        COALESCE((
+          SELECT SUM(i.quantity) FROM inbound i
+          WHERE i.manufacturer=inv.manufacturer AND i.model_name=inv.model_name
+            AND COALESCE(i.spec,'')=COALESCE(inv.spec,'')
+            AND i.condition_type=inv.condition_type
+            AND i.status='priority' AND i.is_deleted=0
+        ),0) AS has_temp_purchase_qty
+      FROM inventory inv
+      ORDER BY inv.manufacturer, inv.model_name, inv.spec, inv.condition_type
+    `);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/outbound — all orders with items + summary (교환출고 제외)
 router.get('/', auth('editor'), async (req, res) => {
   try {
@@ -86,16 +106,20 @@ router.post('/', auth('editor'), async (req, res) => {
       if (!it.manufacturer || !it.model_name || !(it.quantity > 0))
         return res.status(400).json({ error: '브랜드, 모델명, 수량은 필수입니다.' });
 
+      const ct = it.condition_type || 'normal';
+      if (ct === 'disposal')
+        return res.status(400).json({ error: `폐기 재고는 출고할 수 없습니다: ${it.manufacturer} ${it.model_name}` });
+
       const inv = await db.getAsync(
-        `SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ? AND spec = ?`,
-        [it.manufacturer, it.model_name, it.spec || '']
+        `SELECT * FROM inventory WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
+        [it.manufacturer, it.model_name, it.spec || '', ct]
       ) || await db.getAsync(
-        `SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ?`,
-        [it.manufacturer, it.model_name]
+        `SELECT * FROM inventory WHERE manufacturer=? AND model_name=? AND condition_type=?`,
+        [it.manufacturer, it.model_name, ct]
       );
       if (!inv || inv.current_stock < Number(it.quantity)) {
         return res.status(400).json({
-          error: `재고 부족: ${it.manufacturer} ${it.model_name} (현재재고: ${inv ? inv.current_stock : 0}개)`
+          error: `재고 부족: ${it.manufacturer} ${it.model_name} [${ct === 'defective' ? '불량' : '정상'}] (현재재고: ${inv ? inv.current_stock : 0}개)`
         });
       }
       it._inv = inv;
@@ -140,6 +164,7 @@ router.post('/', auth('editor'), async (req, res) => {
         manufacturer: it.manufacturer,
         model_name: it.model_name,
         spec: it.spec || '',
+        condition_type: it.condition_type || 'normal',
         quantity: qty,
         sale_price: salePrice,
         tax_amount: taxAmt,
@@ -164,20 +189,21 @@ router.post('/', auth('editor'), async (req, res) => {
     for (const row of itemRows) {
       await db.runAsync(
         `INSERT INTO outbound_items
-           (id, order_id, category, manufacturer, model_name, spec, quantity, sale_price,
+           (id, order_id, category, manufacturer, model_name, spec, condition_type, quantity, sale_price,
             tax_amount, total_price, avg_purchase_price, profit_per_unit, total_profit,
             is_priority_stock, notes, created_at, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [row.id, row.order_id, row.category, row.manufacturer, row.model_name, row.spec,
+         row.condition_type || 'normal',
          row.quantity, row.sale_price, row.tax_amount, row.total_price,
          row.avg_purchase_price, row.profit_per_unit, row.total_profit,
          row.is_priority_stock || 0, row.notes, n, req.user.id]
       );
 
       await db.runAsync(
-        `UPDATE inventory SET current_stock = current_stock - ?, normal_stock = normal_stock - ?,
+        `UPDATE inventory SET current_stock = current_stock - ?,
          total_outbound = total_outbound + ?, updated_at = ? WHERE id = ?`,
-        [row.quantity, row.quantity, row.quantity, n, row.inv_id]
+        [row.quantity, row.quantity, n, row.inv_id]
       );
     }
 
@@ -202,20 +228,21 @@ router.put('/:id', auth('editor'), async (req, res) => {
     const n = nowStr();
     const taxT = (tax_type === '10') ? '10' : 'none';
 
-    // Restore old stock
+    // Restore old stock (by condition_type)
     for (const oldItem of old.items) {
+      const ct = oldItem.condition_type || 'normal';
       const inv = await db.getAsync(
-        `SELECT id FROM inventory WHERE manufacturer = ? AND model_name = ? AND spec = ?`,
-        [oldItem.manufacturer, oldItem.model_name, oldItem.spec || '']
+        `SELECT id FROM inventory WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
+        [oldItem.manufacturer, oldItem.model_name, oldItem.spec || '', ct]
       ) || await db.getAsync(
-        `SELECT id FROM inventory WHERE manufacturer = ? AND model_name = ?`,
-        [oldItem.manufacturer, oldItem.model_name]
+        `SELECT id FROM inventory WHERE manufacturer=? AND model_name=? AND condition_type=?`,
+        [oldItem.manufacturer, oldItem.model_name, ct]
       );
       if (inv) {
         await db.runAsync(
-          `UPDATE inventory SET current_stock = current_stock + ?, normal_stock = normal_stock + ?,
+          `UPDATE inventory SET current_stock = current_stock + ?,
            total_outbound = total_outbound - ?, updated_at = ? WHERE id = ?`,
-          [oldItem.quantity, oldItem.quantity, oldItem.quantity, n, inv.id]
+          [oldItem.quantity, oldItem.quantity, n, inv.id]
         );
       }
     }
@@ -225,30 +252,35 @@ router.put('/:id', auth('editor'), async (req, res) => {
       if (!it.manufacturer || !it.model_name || !(it.quantity > 0))
         return res.status(400).json({ error: '브랜드, 모델명, 수량은 필수입니다.' });
 
+      const ct = it.condition_type || 'normal';
+      if (ct === 'disposal')
+        return res.status(400).json({ error: `폐기 재고는 출고할 수 없습니다: ${it.manufacturer} ${it.model_name}` });
+
       const inv = await db.getAsync(
-        `SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ? AND spec = ?`,
-        [it.manufacturer, it.model_name, it.spec || '']
+        `SELECT * FROM inventory WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
+        [it.manufacturer, it.model_name, it.spec || '', ct]
       ) || await db.getAsync(
-        `SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ?`,
-        [it.manufacturer, it.model_name]
+        `SELECT * FROM inventory WHERE manufacturer=? AND model_name=? AND condition_type=?`,
+        [it.manufacturer, it.model_name, ct]
       );
       if (!inv || inv.current_stock < Number(it.quantity)) {
-        // Rollback: restore old stock already applied above — we need to reverse
+        // Rollback: restore old stock already applied above
         for (const oldItem of old.items) {
+          const oct = oldItem.condition_type || 'normal';
           const ri = await db.getAsync(
-            `SELECT id FROM inventory WHERE manufacturer = ? AND model_name = ?`,
-            [oldItem.manufacturer, oldItem.model_name]
+            `SELECT id FROM inventory WHERE manufacturer=? AND model_name=? AND condition_type=?`,
+            [oldItem.manufacturer, oldItem.model_name, oct]
           );
           if (ri) {
             await db.runAsync(
-              `UPDATE inventory SET current_stock = current_stock - ?, normal_stock = normal_stock - ?,
+              `UPDATE inventory SET current_stock = current_stock - ?,
                total_outbound = total_outbound + ?, updated_at = ? WHERE id = ?`,
-              [oldItem.quantity, oldItem.quantity, oldItem.quantity, n, ri.id]
+              [oldItem.quantity, oldItem.quantity, n, ri.id]
             );
           }
         }
         return res.status(400).json({
-          error: `재고 부족: ${it.manufacturer} ${it.model_name} (현재재고: ${inv ? inv.current_stock : 0}개)`
+          error: `재고 부족: ${it.manufacturer} ${it.model_name} [${ct === 'defective' ? '불량' : '정상'}] (현재재고: ${inv ? inv.current_stock : 0}개)`
         });
       }
       it._inv = inv;
@@ -264,6 +296,7 @@ router.put('/:id', auth('editor'), async (req, res) => {
     for (const it of items) {
       const inv = it._inv;
       const qty = Number(it.quantity);
+      const ct  = it.condition_type || 'normal';
       const salePrice = Number(it.sale_price) || 0;
       const taxRate = taxT === '10' ? 0.1 : 0;
       const taxAmt = Math.round(qty * salePrice * taxRate);
@@ -275,17 +308,17 @@ router.put('/:id', auth('editor'), async (req, res) => {
 
       await db.runAsync(
         `INSERT INTO outbound_items
-           (id, order_id, category, manufacturer, model_name, spec, quantity, sale_price,
+           (id, order_id, category, manufacturer, model_name, spec, condition_type, quantity, sale_price,
             tax_amount, total_price, avg_purchase_price, profit_per_unit, total_profit, notes, created_at, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [uuidv4(), req.params.id, it.category || null, it.manufacturer, it.model_name, it.spec || '',
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [uuidv4(), req.params.id, it.category || null, it.manufacturer, it.model_name, it.spec || '', ct,
          qty, salePrice, taxAmt, rowTotal, avgPrice, profitUnit, totalProfit, it.notes || null, n, req.user.id]
       );
 
       await db.runAsync(
-        `UPDATE inventory SET current_stock = current_stock - ?, normal_stock = normal_stock - ?,
+        `UPDATE inventory SET current_stock = current_stock - ?,
          total_outbound = total_outbound + ?, updated_at = ? WHERE id = ?`,
-        [qty, qty, qty, n, inv.id]
+        [qty, qty, n, inv.id]
       );
     }
 
@@ -331,20 +364,21 @@ router.delete('/:id', auth('editor'), async (req, res) => {
 
     const n = nowStr();
 
-    // Restore stock for each item
+    // Restore stock for each item (by condition_type)
     for (const it of order.items) {
+      const ct = it.condition_type || 'normal';
       const inv = await db.getAsync(
-        `SELECT id FROM inventory WHERE manufacturer = ? AND model_name = ? AND spec = ?`,
-        [it.manufacturer, it.model_name, it.spec || '']
+        `SELECT id FROM inventory WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
+        [it.manufacturer, it.model_name, it.spec || '', ct]
       ) || await db.getAsync(
-        `SELECT id FROM inventory WHERE manufacturer = ? AND model_name = ?`,
-        [it.manufacturer, it.model_name]
+        `SELECT id FROM inventory WHERE manufacturer=? AND model_name=? AND condition_type=?`,
+        [it.manufacturer, it.model_name, ct]
       );
       if (inv) {
         await db.runAsync(
-          `UPDATE inventory SET current_stock = current_stock + ?, normal_stock = normal_stock + ?,
+          `UPDATE inventory SET current_stock = current_stock + ?,
            total_outbound = total_outbound - ?, updated_at = ? WHERE id = ?`,
-          [it.quantity, it.quantity, it.quantity, n, inv.id]
+          [it.quantity, it.quantity, n, inv.id]
         );
       }
     }

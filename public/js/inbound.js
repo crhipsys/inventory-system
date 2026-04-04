@@ -16,6 +16,7 @@ let _directRowCount = 5;           // 직접입력 행 수
 let _ibActiveTab    = 'all';       // 목록 탭: 'all'|'completed'|'pending'|'priority'
 let _ibBulkStatus   = 'pending';   // 폼 상단 매입상태 버튼 상태
 let _ibMemoSaving   = false;       // 메모 저장 중 플래그
+let _ibVendorTimer  = null;        // 거래처 검색 디바운스
 
 // ── 서브페이지 전환 ──────────────────────────
 function ibShowSubpage(name, pushState = true) {
@@ -160,12 +161,13 @@ function renderIbCards(list) {
       hasPriority  && '<span class="ib-badge ib-badge-priority">⚠️우선등록</span>',
       hasPending   && '<span class="ib-badge ib-badge-pending">미완료</span>',
     ].filter(Boolean).join(' ');
+    const ssIcon = o.has_smartstore ? '<span class="ib-ss-icon" title="스마트스토어 등록 품목 포함">🛒</span>' : '';
 
     return `
       <div class="ib-card" onclick="ibOpenDetail('${o.id}')">
         <div class="ib-card-top">
+          <span class="ib-card-vendor">${escHtml(o.vendor_name || '-')}${ssIcon}</span>
           <span class="ib-card-date">${escHtml(o.order_date)}</span>
-          <span class="ib-card-vendor">${escHtml(o.vendor_name || '-')}</span>
           <div class="ib-card-badges">${statusBadges}</div>
         </div>
         <div class="ib-card-summary">${summaryText}</div>
@@ -201,6 +203,11 @@ function renderIbDetail(order) {
            <option value="priority"  ${it.status === 'priority'  ? 'selected' : ''}>⚠️ 우선등록</option>
          </select>`
       : `<span class="ib-badge ${{ completed:'ib-badge-completed', pending:'ib-badge-pending', priority:'ib-badge-priority' }[it.status]||''}">${{ completed:'매입완료', pending:'매입미완료', priority:'⚠️우선등록' }[it.status]||it.status}</span>`;
+    const ssCell = (it.status === 'completed' && isEditor)
+      ? (it.is_smartstore
+          ? `<button class="btn btn-xs btn-ss-on"  data-item-id="${it.id}" onclick="ibToggleSmartstore('${it.id}', 1)">✅ 스마트스토어 등록됨</button>`
+          : `<button class="btn btn-xs btn-ss-off" data-item-id="${it.id}" onclick="ibToggleSmartstore('${it.id}', 0)">🛒 스마트스토어 등록</button>`)
+      : (it.is_smartstore ? '<span style="color:var(--success);font-size:.8rem">✅ 등록됨</span>' : '');
     return `
       <tr class="${priorityCls}">
         <td>${escHtml(it.category || '-')}</td>
@@ -216,20 +223,46 @@ function renderIbDetail(order) {
         <td>
           <button class="btn btn-xs btn-ghost" onclick="ibShowPriceHistory('${it.id}','${escHtml(it.model_name)}')">이력</button>
         </td>
+        <td style="white-space:nowrap">${ssCell}</td>
       </tr>
     `;
   }).join('');
 
+  // 거래처 유형별 헤더 정보 구성
+  const vt = order.vendor_type || 'company';
+  let vendorRows = '';
+  if (order.vendor_id) {
+    if (vt === 'individual') {
+      vendorRows = `
+        <div class="ob-dd-pair"><dt>이름</dt><dd>${escHtml(order.individual_name || order.vendor_name || '-')}</dd></div>
+        <div class="ob-dd-pair"><dt>전화번호</dt><dd>${order.individual_phone ? fmtPhone(order.individual_phone) : '-'}</dd></div>
+        ${order.vendor_address ? `<div class="ob-dd-pair"><dt>주소</dt><dd>${escHtml(order.vendor_address)}</dd></div>` : ''}
+      `;
+    } else {
+      vendorRows = `
+        <div class="ob-dd-pair"><dt>상호명</dt><dd>${escHtml(order.vendor_company || order.vendor_name || '-')}</dd></div>
+        <div class="ob-dd-pair"><dt>회사전화</dt><dd>${order.vendor_company_phone ? fmtPhone(order.vendor_company_phone) : '-'}</dd></div>
+        ${order.manager_name ? `<div class="ob-dd-pair"><dt>담당자</dt><dd>${escHtml(order.manager_name)}</dd></div>` : ''}
+        ${order.manager_phone ? `<div class="ob-dd-pair"><dt>담당자전화번호</dt><dd>${fmtPhone(order.manager_phone)}</dd></div>` : ''}
+        ${order.vendor_address ? `<div class="ob-dd-pair"><dt>주소</dt><dd>${escHtml(order.vendor_address)}</dd></div>` : ''}
+      `;
+    }
+  } else if (order.vendor_name) {
+    vendorRows = `<div class="ob-dd-pair"><dt>상호명</dt><dd>${escHtml(order.vendor_name)}</dd></div>`;
+  }
+
   document.getElementById('ib-detail-content').innerHTML = `
-    <div class="ib-detail-header">
-      <dl class="detail-dl">
-        <div class="detail-row"><dt>입고날짜</dt><dd>${escHtml(order.order_date)}</dd></div>
-        <div class="detail-row"><dt>거래처</dt><dd>${escHtml(order.vendor_name || '-')}</dd></div>
-        <div class="detail-row"><dt>등록자</dt><dd>${escHtml(order.created_by_name || '-')}</dd></div>
-        <div class="detail-row"><dt>등록일시</dt><dd>${fmtDateTime(order.created_at)}</dd></div>
-        <div class="detail-row"><dt>수정자</dt><dd>${escHtml(order.updated_by_name || '-')}</dd></div>
-        <div class="detail-row"><dt>수정일시</dt><dd>${fmtDateTime(order.updated_at)}</dd></div>
+    <div class="ib-header-card">
+      <dl class="ob-detail-dl" style="grid-template-columns:repeat(3,1fr)">
+        <div class="ob-dd-pair"><dt>입고날짜</dt><dd>${escHtml(order.order_date)}</dd></div>
+        ${vendorRows}
       </dl>
+      <div class="vdd-meta" style="margin-top:.75rem">
+        <span><span class="meta-label">등록자</span>${escHtml(order.created_by_name || '-')}</span>
+        <span><span class="meta-label">등록일시</span>${fmtDateTime(order.created_at)}</span>
+        <span><span class="meta-label">수정자</span>${escHtml(order.updated_by_name || '-')}</span>
+        <span><span class="meta-label">수정일시</span>${order.updated_at ? fmtDateTime(order.updated_at) : '-'}</span>
+      </div>
     </div>
     ${isEditor ? `
     <div class="ib-bulk-bar">
@@ -255,6 +288,7 @@ function renderIbDetail(order) {
           <col style="width:100px">
           <col style="width:200px">
           <col style="width:55px">
+          <col style="width:160px">
         </colgroup>
         <thead>
           <tr>
@@ -263,14 +297,15 @@ function renderIbDetail(order) {
             <th class="price-col" style="text-align:right">매입가</th>
             <th class="price-col" style="text-align:right">합계</th>
             <th>처리구분</th><th>매입상태</th><th>비고</th><th>이력</th>
+            <th>스마트스토어</th>
           </tr>
         </thead>
-        <tbody>${rows || '<tr><td colspan="11" class="empty">품목 없음</td></tr>'}</tbody>
+        <tbody>${rows || '<tr><td colspan="12" class="empty">품목 없음</td></tr>'}</tbody>
         <tfoot>
           <tr class="price-col" style="background:var(--gray-50);font-weight:700">
             <td colspan="6" style="text-align:right;padding:.6rem 1rem">합계</td>
             <td style="text-align:right;padding:.6rem 1rem">${totalPrice.toLocaleString()}원</td>
-            <td colspan="4"></td>
+            <td colspan="5"></td>
           </tr>
         </tfoot>
       </table>
@@ -362,6 +397,46 @@ async function ibDetailBulkStatus(order, status) {
   }
 }
 
+// ── 스마트스토어 등록 토글 ─────────────────────
+window.ibToggleSmartstore = async function(itemId, currentState) {
+  const register = !currentState;
+  const msg = register
+    ? '이 상품을 스마트스토어 등록 상품으로 표시하시겠습니까?'
+    : '스마트스토어 등록 표시를 해제하시겠습니까?';
+  const ok = await confirmDialog(msg, '스마트스토어', register ? '등록' : '해제');
+  if (!ok) return;
+  try {
+    const result = await API.put(`/inbound/items/${itemId}/smartstore`, { is_smartstore: register });
+    // 캐시 업데이트
+    if (_currentOrder?.items) {
+      const item = _currentOrder.items.find(i => i.id === itemId);
+      if (item) {
+        item.is_smartstore = result.is_smartstore;
+        item.smartstore_registered_at = result.smartstore_registered_at;
+      }
+    }
+    // 버튼 교체
+    const btn = document.querySelector(`[data-item-id="${itemId}"]`);
+    if (btn) {
+      if (result.is_smartstore) {
+        btn.className = 'btn btn-xs btn-ss-on';
+        btn.textContent = '✅ 스마트스토어 등록됨';
+        btn.setAttribute('onclick', `ibToggleSmartstore('${itemId}', 1)`);
+      } else {
+        btn.className = 'btn btn-xs btn-ss-off';
+        btn.textContent = '🛒 스마트스토어 등록';
+        btn.setAttribute('onclick', `ibToggleSmartstore('${itemId}', 0)`);
+      }
+    }
+    // 목록 카드 캐시 갱신
+    const cached = _ibOrders.find(o => o.id === _currentOrder?.id);
+    if (cached) cached.has_smartstore = _currentOrder.items.some(i => i.is_smartstore);
+    toast(register ? '스마트스토어 등록됨' : '스마트스토어 등록 해제됨', 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
+
 // ── 메모 ────────────────────────────────────
 function ibLoadMemo(order) {
   const textarea = document.getElementById('ib-memo-text');
@@ -434,7 +509,15 @@ function ibShowForm(mode, order) {
 
   const today = new Date().toISOString().slice(0, 10);
   document.getElementById('ib-vendor-id').value   = order?.vendor_id   || '';
-  document.getElementById('ib-vendor-name').value = order?.vendor_name || '';
+  // vendor_name: 유형별 표시명
+  let vendorDisplayName = order?.vendor_name || '';
+  if (order?.vendor_id && order?.vendor_type === 'individual' && order?.individual_name) {
+    vendorDisplayName = order.individual_name;
+  } else if (order?.vendor_id && order?.vendor_company) {
+    vendorDisplayName = order.vendor_company;
+  }
+  document.getElementById('ib-vendor-name').value = vendorDisplayName;
+  document.getElementById('ib-vendor-dropdown')?.classList.add('hidden');
 
   // 상단 매입상태 버튼 초기화
   _ibBulkStatus = 'pending';
@@ -990,13 +1073,21 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', () => ibSwitchTab(btn.dataset.ibTab));
   });
 
-  // 거래처 검색
-  document.getElementById('btn-ib-pick-vendor')?.addEventListener('click', () => {
-    openVendorPicker(v => {
-      document.getElementById('ib-vendor-id').value   = v.id;
-      document.getElementById('ib-vendor-name').value = v.company_name;
-    }, 'purchase');
-  });
+  // 거래처 인라인 검색
+  const ibVendorInp = document.getElementById('ib-vendor-name');
+  if (ibVendorInp) {
+    ibVendorInp.addEventListener('input', ibVendorSearch);
+    ibVendorInp.addEventListener('focus', ibVendorSearch);
+    ibVendorInp.addEventListener('blur', () => {
+      // 약간 딜레이 후 닫기 (클릭 이벤트가 먼저 처리되도록)
+      setTimeout(() => document.getElementById('ib-vendor-dropdown')?.classList.add('hidden'), 200);
+    });
+    ibVendorInp.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        document.getElementById('ib-vendor-dropdown')?.classList.add('hidden');
+      }
+    });
+  }
 
   // 직접 입력 행 수
   document.getElementById('btn-ib-set-rows')?.addEventListener('click', () => {
@@ -1049,3 +1140,87 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('modal-price-history').classList.add('hidden');
   });
 });
+
+// ── 입고 폼: 거래처 인라인 검색 드롭다운 ──────
+function ibVendorSearch() {
+  const inp = document.getElementById('ib-vendor-name');
+  const dd  = document.getElementById('ib-vendor-dropdown');
+  if (!inp || !dd) return;
+
+  const q = inp.value.trim().toLowerCase();
+
+  // allPurchaseVendors는 app.js에서 관리 (전역 변수)
+  const list = typeof allPurchaseVendors !== 'undefined' ? allPurchaseVendors : [];
+
+  // 비어있으면 로드
+  if (!list.length) {
+    API.get('/purchase-vendors').then(data => {
+      if (typeof allPurchaseVendors !== 'undefined') allPurchaseVendors.push(...data);
+      ibVendorSearch();
+    }).catch(() => {});
+    return;
+  }
+
+  const filtered = q
+    ? list.filter(v => {
+        const name = (v.vendor_type||'company') === 'individual'
+          ? (v.individual_name||'') : (v.company_name||'');
+        const phone = (v.vendor_type||'company') === 'individual'
+          ? (v.individual_phone||'') : (v.phone||'');
+        return name.toLowerCase().includes(q) ||
+               (v.manager_name||'').toLowerCase().includes(q) ||
+               phone.replace(/\D/g,'').includes(q.replace(/\D/g,''));
+      })
+    : list.slice(0, 20);
+
+  const items = filtered.slice(0, 15).map(v => {
+    const vt = v.vendor_type || 'company';
+    const badge = vt === 'individual'
+      ? '<span class="pv-type-badge pv-type-individual">개인</span>'
+      : '<span class="pv-type-badge pv-type-company">기업</span>';
+    const rawName = vt === 'individual' ? (v.individual_name||'') : (v.company_name||'');
+    const displayName = escHtml(rawName);
+    const safeId   = v.id.replace(/'/g, '');
+    const safeName = rawName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const sub = vt === 'individual'
+      ? (v.individual_phone ? fmtPhone(v.individual_phone) : '')
+      : (v.manager_name ? `담당: ${escHtml(v.manager_name)}` : (v.phone ? fmtPhone(v.phone) : ''));
+    const subHtml = sub ? `<span class="ib-vdd-sub">${sub}</span>` : '';
+    return `<div class="ib-vendor-dd-item" onmousedown="ibSelectVendor('${safeId}','${safeName}')">
+      ${badge} ${displayName} ${subHtml}
+    </div>`;
+  });
+
+  const safeQ  = q.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const newBtn = `<div class="ib-vendor-dd-item dd-new" onmousedown="ibOpenNewVendor('${safeQ}')">
+    + 신규 거래처 등록
+  </div>`;
+
+  if (!items.length && !q) {
+    dd.innerHTML = `<div class="ib-vendor-dd-empty">거래처가 없습니다.</div>${newBtn}`;
+  } else if (!items.length) {
+    dd.innerHTML = `<div class="ib-vendor-dd-empty">"${escHtml(q)}" 검색 결과 없음</div>${newBtn}`;
+  } else {
+    dd.innerHTML = items.join('') + newBtn;
+  }
+  dd.classList.remove('hidden');
+}
+
+window.ibSelectVendor = function(id, displayName) {
+  document.getElementById('ib-vendor-id').value   = id;
+  document.getElementById('ib-vendor-name').value = displayName;
+  document.getElementById('ib-vendor-dropdown')?.classList.add('hidden');
+};
+
+window.ibOpenNewVendor = function(prefillName) {
+  // 전역 openVendorModal을 호출 (app.js에 있음)
+  if (typeof openVendorModal === 'function') {
+    if (typeof _currentVendorType !== 'undefined') {
+      // eslint-disable-next-line no-undef
+      _currentVendorType = 'purchase';
+    }
+    openVendorModal({ individual_name: prefillName });
+    // 모달 저장 후 드롭다운 갱신을 위해 콜백 처리
+    // (saveVendor가 호출되면 allPurchaseVendors가 갱신됨)
+  }
+};

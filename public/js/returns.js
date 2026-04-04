@@ -194,8 +194,8 @@ function rtRenderCards(list) {
 
     return `<div class="ib-card" onclick="rtShowDetail('${r.id}')">
       <div class="ib-card-top">
-        <span class="ib-card-date">${r.received_at || '-'}</span>
         <span class="ib-card-vendor">${escHtml(r.vendor_name || '(거래처 없음)')}</span>
+        <span class="ib-card-date">${r.received_at || '-'}</span>
         <div class="ib-card-badges">
           <span class="rt-type-badge ${typeClass}">${typeLabel}</span>
           <span class="ib-badge ${statusClass}">${statusLabel}</span>

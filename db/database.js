@@ -98,6 +98,9 @@ async function runMigrations(adapter) {
     { table: 'outbound',         column: 'sales_vendor_id', def: 'TEXT' },
     { table: 'sales_vendors',    column: 'contact_person',  def: 'TEXT' },
     { table: 'sales_vendors',    column: 'name',            def: 'TEXT' },
+    { table: 'inbound',          column: 'is_smartstore',             def: 'INTEGER NOT NULL DEFAULT 0' },
+    { table: 'inbound',          column: 'smartstore_registered_at',  def: 'TEXT' },
+    { table: 'inbound',          column: 'smartstore_registered_by',  def: 'TEXT' },
   ];
 
   for (const c of cols) {
@@ -541,6 +544,165 @@ async function migrateExchangeOutbound(adapter) {
   }
 }
 
+// ── InventoryConditionType 마이그레이션 ────────────────────────
+// inventory 테이블을 condition_type별 별도 행으로 분리
+// UNIQUE(manufacturer, model_name, spec) → UNIQUE(manufacturer, model_name, spec, condition_type)
+async function migrateInventoryConditionType(adapter) {
+  try {
+    if (adapter._isPg) {
+      // PostgreSQL: condition_type 컬럼 추가
+      await adapter.runAsync(`ALTER TABLE inventory ADD COLUMN IF NOT EXISTS condition_type TEXT NOT NULL DEFAULT 'normal'`);
+      // 기존 UNIQUE 인덱스 제거 후 새 인덱스 생성
+      await adapter.runAsync(`DROP INDEX IF EXISTS idx_inventory_model`);
+      await adapter.runAsync(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_model
+        ON inventory(manufacturer, model_name, spec, condition_type)
+      `);
+      // 불량 행 삽입 (defective_stock > 0)
+      await adapter.runAsync(`
+        INSERT INTO inventory
+          (id, category, product_type, spec, manufacturer, model_name, condition_type,
+           current_stock, avg_purchase_price, total_inbound, total_outbound,
+           normal_returns, has_temp_purchase, last_vendor_id, notes, updated_at)
+        SELECT gen_random_uuid()::text,
+          category, product_type, spec, manufacturer, model_name, 'defective',
+          defective_stock,
+          COALESCE((SELECT SUM(i.quantity*i.purchase_price)/NULLIF(SUM(i.quantity),0)
+            FROM inbound i WHERE i.manufacturer=inventory.manufacturer AND i.model_name=inventory.model_name
+              AND COALESCE(i.spec,'')=COALESCE(inventory.spec,'')
+              AND i.condition_type='defective' AND i.status IN ('completed','priority') AND i.is_deleted=0),0),
+          0, 0, 0, 0, last_vendor_id, notes, updated_at
+        FROM inventory
+        WHERE defective_stock > 0 AND condition_type = 'normal'
+        ON CONFLICT DO NOTHING
+      `);
+      // 폐기 행 삽입 (disposal_stock > 0)
+      await adapter.runAsync(`
+        INSERT INTO inventory
+          (id, category, product_type, spec, manufacturer, model_name, condition_type,
+           current_stock, avg_purchase_price, total_inbound, total_outbound,
+           normal_returns, has_temp_purchase, last_vendor_id, notes, updated_at)
+        SELECT gen_random_uuid()::text,
+          category, product_type, spec, manufacturer, model_name, 'disposal',
+          disposal_stock, 0, 0, 0, 0, 0, last_vendor_id, notes, updated_at
+        FROM inventory
+        WHERE disposal_stock > 0 AND condition_type = 'normal'
+        ON CONFLICT DO NOTHING
+      `);
+      // 기존 normal 행 current_stock → normal_stock 값으로 교체
+      await adapter.runAsync(`UPDATE inventory SET current_stock = normal_stock WHERE condition_type = 'normal'`);
+      console.log('[Migration] inventory condition_type 분리 완료 (PG)');
+    } else {
+      // SQLite: condition_type 컬럼 이미 있으면 스킵
+      const cols = adapter.sqlite.prepare('PRAGMA table_info(inventory)').all().map(r => r.name);
+      if (cols.includes('condition_type')) {
+        console.log('[Migration] inventory.condition_type 이미 존재 — 스킵');
+        return;
+      }
+
+      console.log('[Migration] inventory condition_type 분리 시작');
+
+      adapter.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS inventory_v3 (
+          id                  TEXT PRIMARY KEY,
+          category            TEXT,
+          product_type        TEXT NOT NULL DEFAULT 'general',
+          spec                TEXT NOT NULL DEFAULT '',
+          manufacturer        TEXT NOT NULL,
+          model_name          TEXT NOT NULL,
+          condition_type      TEXT NOT NULL DEFAULT 'normal'
+                                CHECK (condition_type IN ('normal','defective','disposal')),
+          current_stock       INTEGER NOT NULL DEFAULT 0,
+          avg_purchase_price  REAL NOT NULL DEFAULT 0,
+          total_inbound       INTEGER NOT NULL DEFAULT 0,
+          total_outbound      INTEGER NOT NULL DEFAULT 0,
+          normal_returns      INTEGER NOT NULL DEFAULT 0,
+          has_temp_purchase   INTEGER NOT NULL DEFAULT 0,
+          last_vendor_id      TEXT,
+          notes               TEXT,
+          updated_at          TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+          UNIQUE(manufacturer, model_name, spec, condition_type)
+        )
+      `);
+
+      const { v4: uuidv4 } = require('uuid');
+      const rows = adapter.sqlite.prepare('SELECT * FROM inventory').all();
+
+      const insStmt = adapter.sqlite.prepare(`
+        INSERT OR IGNORE INTO inventory_v3
+          (id, category, product_type, spec, manufacturer, model_name, condition_type,
+           current_stock, avg_purchase_price, total_inbound, total_outbound,
+           normal_returns, has_temp_purchase, last_vendor_id, notes, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `);
+
+      const defAvgStmt = adapter.sqlite.prepare(`
+        SELECT COALESCE(SUM(quantity*purchase_price)/NULLIF(SUM(quantity),0),0) AS avg
+        FROM inbound
+        WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=?
+          AND condition_type='defective' AND status IN ('completed','priority') AND is_deleted=0
+      `);
+
+      for (const r of rows) {
+        // 정상 행
+        insStmt.run(r.id, r.category, r.product_type, r.spec||'',
+          r.manufacturer, r.model_name, 'normal',
+          r.normal_stock||0, r.avg_purchase_price||0,
+          r.total_inbound||0, r.total_outbound||0,
+          r.normal_returns||0, r.has_temp_purchase||0,
+          r.last_vendor_id, r.notes, r.updated_at);
+
+        // 불량 행
+        if ((r.defective_stock||0) > 0) {
+          const defAvg = defAvgStmt.get(r.manufacturer, r.model_name, r.spec||'')?.avg || 0;
+          insStmt.run(uuidv4(), r.category, r.product_type, r.spec||'',
+            r.manufacturer, r.model_name, 'defective',
+            r.defective_stock, defAvg, 0, 0, 0, 0,
+            r.last_vendor_id, r.notes, r.updated_at);
+        }
+
+        // 폐기 행
+        if ((r.disposal_stock||0) > 0) {
+          insStmt.run(uuidv4(), r.category, r.product_type, r.spec||'',
+            r.manufacturer, r.model_name, 'disposal',
+            r.disposal_stock, 0, 0, 0, 0, 0,
+            r.last_vendor_id, r.notes, r.updated_at);
+        }
+      }
+
+      adapter.sqlite.exec('DROP TABLE inventory');
+      adapter.sqlite.exec('ALTER TABLE inventory_v3 RENAME TO inventory');
+      adapter.sqlite.exec('CREATE INDEX IF NOT EXISTS idx_inventory_model ON inventory(manufacturer, model_name, spec)');
+      adapter.sqlite.exec('CREATE INDEX IF NOT EXISTS idx_inventory_cond  ON inventory(manufacturer, model_name, spec, condition_type)');
+      console.log(`[Migration] inventory condition_type 분리 완료 (${rows.length}행 처리)`);
+    }
+  } catch (err) {
+    console.error('[Migration] migrateInventoryConditionType:', err.message);
+  }
+}
+
+// ── ConditionTypeCols 마이그레이션 (outbound_items, avg_price_history 컬럼 추가) ─
+async function migrateConditionTypeCols(adapter) {
+  const cols = [
+    { table: 'outbound_items',     column: 'condition_type', def: "TEXT NOT NULL DEFAULT 'normal'" },
+    { table: 'avg_price_history',  column: 'condition_type', def: "TEXT NOT NULL DEFAULT 'normal'" },
+    { table: 'inventory_adjustments', column: 'condition_type', def: "TEXT NOT NULL DEFAULT 'normal'" },
+  ];
+  for (const c of cols) {
+    try {
+      if (adapter._isPg) {
+        await adapter.runAsync(`ALTER TABLE ${c.table} ADD COLUMN IF NOT EXISTS ${c.column} ${c.def}`);
+      } else {
+        const existing = adapter.sqlite.prepare(`PRAGMA table_info(${c.table})`).all().map(r => r.name);
+        if (!existing.includes(c.column)) {
+          adapter.sqlite.exec(`ALTER TABLE ${c.table} ADD COLUMN ${c.column} ${c.def}`);
+        }
+      }
+    } catch(e) { console.log(`[Migration] condTypeCols ${c.table}.${c.column}: ${e.message}`); }
+  }
+  console.log('[Migration] condition_type 컬럼 확인 완료');
+}
+
 // ── Sales8 마이그레이션 (outbound_items.is_priority_stock 추가) ─
 async function migrateSales8(adapter) {
   try {
@@ -683,6 +845,32 @@ async function initSchema(adapter) {
 // ── 현재 시각 (ISO 문자열) ─────────────────────────────────────
 function now() {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
+}
+
+// ── 매입거래처 유형(개인/기업) 컬럼 마이그레이션 ──────────────
+async function migratePurchaseVendorType(adapter) {
+  const newCols = [
+    { name: 'vendor_type',        def: "TEXT NOT NULL DEFAULT 'company'" },
+    { name: 'individual_name',    def: 'TEXT' },
+    { name: 'individual_phone',   def: 'TEXT' },
+    { name: 'individual_notes',   def: 'TEXT' },
+    { name: 'individual_account', def: 'TEXT' },
+    { name: 'manager_name',       def: 'TEXT' },
+    { name: 'manager_phone',      def: 'TEXT' },
+  ];
+  for (const col of newCols) {
+    try {
+      if (adapter._isPg) {
+        await adapter.runAsync(`ALTER TABLE purchase_vendors ADD COLUMN IF NOT EXISTS ${col.name} ${col.def}`);
+      } else {
+        const existing = adapter.sqlite.prepare('PRAGMA table_info(purchase_vendors)').all().map(r => r.name);
+        if (!existing.includes(col.name)) {
+          adapter.sqlite.exec(`ALTER TABLE purchase_vendors ADD COLUMN ${col.name} ${col.def}`);
+          console.log(`[Migration] purchase_vendors.${col.name} 추가`);
+        }
+      }
+    } catch(e) { console.log(`[Migration] purchase_vendors.${col.name}: ${e.message}`); }
+  }
 }
 
 // ── users 테이블 username 컬럼 마이그레이션 ────────────────────
@@ -888,7 +1076,10 @@ async function initDB() {
   await migrateExchangeOutbound(db);
   await migrateReturnItemsSalePrice(db);
   await migrateOutboundPaymentStatus(db);
+  await migrateInventoryConditionType(db);
+  await migrateConditionTypeCols(db);
   await migrateUsersUsername(db);
+  await migratePurchaseVendorType(db);
   await seedAdmin(db);
   await seedTestAccounts(db);
   await seedVendors(db);

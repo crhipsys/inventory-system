@@ -190,4 +190,81 @@ router.delete('/users/:id', auth('admin'), async (req, res) => {
   }
 });
 
+// ── GET /api/auth/profile ─────────────────────────────────────
+// 내 정보 조회 (본인)
+router.get('/profile', auth('viewer'), async (req, res) => {
+  try {
+    const db   = getDB();
+    const user = await db.getAsync(
+      'SELECT id, name, username, phone, role, created_at FROM users WHERE id = ? AND is_deleted = 0',
+      [req.user.id]
+    );
+    if (!user) return res.status(404).json({ error: '사용자를 찾을 수 없습니다.' });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: '서버 오류가 발생했습니다.' });
+  }
+});
+
+// ── PUT /api/auth/users/:id/password ─────────────────────────
+// 관리자가 사용자 비밀번호 강제 변경
+router.put('/users/:id/password', auth('admin'), async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password || password.length < 4)
+      return res.status(400).json({ error: '비밀번호는 4자 이상이어야 합니다.' });
+
+    const db     = getDB();
+    const target = await db.getAsync(
+      'SELECT * FROM users WHERE id = ? AND is_deleted = 0', [req.params.id]
+    );
+    if (!target) return res.status(404).json({ error: '사용자를 찾을 수 없습니다.' });
+
+    const hash = await bcrypt.hash(password, 12);
+    await db.runAsync('UPDATE users SET password_hash = ? WHERE id = ?', [hash, req.params.id]);
+    await writeAuditLog('users', req.params.id, 'update',
+      { password_hash: '[hidden]' },
+      { note: `관리자(${req.user.name})가 비밀번호 변경` },
+      req.user.id
+    );
+    res.json({ message: '비밀번호가 변경됐습니다.' });
+  } catch (err) {
+    console.error('[auth/users/password]', err);
+    res.status(500).json({ error: '서버 오류가 발생했습니다.' });
+  }
+});
+
+// ── PUT /api/auth/profile/password ───────────────────────────
+// 본인 비밀번호 변경
+router.put('/profile/password', auth('viewer'), async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+    if (!current_password || !new_password)
+      return res.status(400).json({ error: '현재 비밀번호와 새 비밀번호를 입력하세요.' });
+    if (new_password.length < 4)
+      return res.status(400).json({ error: '비밀번호는 4자 이상이어야 합니다.' });
+
+    const db   = getDB();
+    const user = await db.getAsync(
+      'SELECT * FROM users WHERE id = ? AND is_deleted = 0', [req.user.id]
+    );
+    if (!user) return res.status(404).json({ error: '사용자를 찾을 수 없습니다.' });
+
+    const ok = await bcrypt.compare(current_password, user.password_hash);
+    if (!ok) return res.status(401).json({ error: '현재 비밀번호가 올바르지 않습니다.' });
+
+    const hash = await bcrypt.hash(new_password, 12);
+    await db.runAsync('UPDATE users SET password_hash = ? WHERE id = ?', [hash, req.user.id]);
+    await writeAuditLog('users', req.user.id, 'update',
+      { password_hash: '[hidden]' },
+      { note: '본인 비밀번호 변경' },
+      req.user.id
+    );
+    res.json({ message: '비밀번호가 변경됐습니다.' });
+  } catch (err) {
+    console.error('[auth/profile/password]', err);
+    res.status(500).json({ error: '서버 오류가 발생했습니다.' });
+  }
+});
+
 module.exports = router;

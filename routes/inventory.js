@@ -13,12 +13,14 @@ const INBOUND_SUBS = `
     SELECT SUM(i.quantity) FROM inbound i
     WHERE i.manufacturer=inv.manufacturer AND i.model_name=inv.model_name
       AND COALESCE(i.spec,'')=COALESCE(inv.spec,'')
+      AND i.condition_type=inv.condition_type
       AND i.status='completed' AND i.is_deleted=0
   ),0) AS completed_stock,
   COALESCE((
     SELECT SUM(i.quantity) FROM inbound i
     WHERE i.manufacturer=inv.manufacturer AND i.model_name=inv.model_name
       AND COALESCE(i.spec,'')=COALESCE(inv.spec,'')
+      AND i.condition_type=inv.condition_type
       AND i.status='priority' AND i.is_deleted=0
   ),0) AS priority_stock,
   COALESCE((
@@ -32,9 +34,17 @@ const INBOUND_SUBS = `
     INNER JOIN inbound i ON i.order_id=io.id
     WHERE i.manufacturer=inv.manufacturer AND i.model_name=inv.model_name
       AND COALESCE(i.spec,'')=COALESCE(inv.spec,'')
+      AND i.condition_type=inv.condition_type
       AND i.is_deleted=0 AND io.is_deleted=0
     ORDER BY io.order_date DESC LIMIT 1
-  ) AS last_vendor
+  ) AS last_vendor,
+  COALESCE((
+    SELECT MAX(i.is_smartstore) FROM inbound i
+    WHERE i.manufacturer=inv.manufacturer AND i.model_name=inv.model_name
+      AND COALESCE(i.spec,'')=COALESCE(inv.spec,'')
+      AND i.condition_type=inv.condition_type
+      AND i.is_deleted=0
+  ),0) AS has_smartstore
 `;
 
 // ── GET /api/inventory ─────────────────────────────────────────────
@@ -56,11 +66,11 @@ router.get('/summary', auth('viewer'), async (req, res) => {
     const db = getDB();
     const rows = await db.allAsync('SELECT * FROM inventory');
     const summary = {
-      total_items:          rows.length,
+      total_items:          new Set(rows.map(r => `${r.manufacturer}|${r.model_name}|${r.spec||''}`)).size,
       total_stock:          rows.reduce((s, r) => s + (r.current_stock || 0), 0),
       temp_purchase_items:  rows.filter(r => r.has_temp_purchase > 0).length,
-      defective_items:      rows.filter(r => r.defective_stock > 0).length,
-      disposal_items:       rows.filter(r => r.disposal_stock > 0).length,
+      defective_items:      rows.filter(r => r.condition_type === 'defective' && (r.current_stock || 0) > 0).length,
+      disposal_items:       rows.filter(r => r.condition_type === 'disposal'  && (r.current_stock || 0) > 0).length,
       pending_inbound_items: 0, // 아래서 계산
     };
     // 매입미완료 품목 수
@@ -246,7 +256,7 @@ router.post('/adjustments', auth('editor'), async (req, res) => {
 
     // 재고 조회
     const inv = await db.getAsync(
-      'SELECT * FROM inventory WHERE manufacturer=? AND model_name=? AND COALESCE(spec,"")=?',
+      `SELECT * FROM inventory WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=?`,
       [manufacturer, model_name, specVal]
     );
     if (!inv) return res.status(404).json({ error: '해당 모델의 재고 데이터가 없습니다.' });
@@ -263,19 +273,19 @@ router.post('/adjustments', auth('editor'), async (req, res) => {
 
       await db.runAsync(
         `UPDATE inventory SET
-           current_stock=current_stock-?, normal_stock=MAX(0,normal_stock-?),
+           current_stock=current_stock-?,
            updated_at=?
          WHERE id=?`,
-        [qty, qty, n, inv.id]
+        [qty, n, inv.id]
       );
 
     } else if (adjustment_type === 'surplus') {
       await db.runAsync(
         `UPDATE inventory SET
-           current_stock=current_stock+?, normal_stock=normal_stock+?,
+           current_stock=current_stock+?,
            updated_at=?
          WHERE id=?`,
-        [qty, qty, n, inv.id]
+        [qty, n, inv.id]
       );
 
     } else if (adjustment_type === 'temp_purchase') {
@@ -310,11 +320,11 @@ router.post('/adjustments', auth('editor'), async (req, res) => {
 
       await db.runAsync(
         `UPDATE inventory SET
-           current_stock=?, avg_purchase_price=?, normal_stock=normal_stock+?,
+           current_stock=?, avg_purchase_price=?,
            total_inbound=total_inbound+?, has_temp_purchase=has_temp_purchase+1,
            updated_at=?
          WHERE id=?`,
-        [newStock, newAvg, qty, qty, n, inv.id]
+        [newStock, newAvg, qty, n, inv.id]
       );
       adjStatus = 'temp';
 

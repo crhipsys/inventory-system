@@ -19,9 +19,9 @@ const ROLE_CLASS = {
 
 // 역할별 접근 가능 페이지
 const PAGE_ACCESS = {
-  admin:  ['dashboard','inventory','inbound','outbound','returns','purchase-vendors','sales-vendors','sales','users','company'],
-  editor: ['dashboard','inventory','inbound','outbound','returns','purchase-vendors','sales-vendors','sales','company'],
-  viewer: ['dashboard','inventory','company'],
+  admin:  ['dashboard','inventory','inbound','outbound','returns','purchase-vendors','sales-vendors','sales','users','company','profile'],
+  editor: ['dashboard','inventory','inbound','outbound','returns','purchase-vendors','sales-vendors','sales','company','profile'],
+  viewer: ['dashboard','inventory','company','profile'],
 };
 
 // ══════════════════════════════════════════════
@@ -111,7 +111,7 @@ function showPage(name) {
     outbound: '출고 관리', returns: '반품/불량',
     'purchase-vendors': '매입거래처 관리',
     'sales-vendors':    '출고거래처 관리',
-    sales: '매출/수익', users: '사용자 관리', company: '회사 정보',
+    sales: '매출/수익', users: '사용자 관리', company: '회사 정보', profile: '내 정보',
   };
   document.getElementById('page-title').textContent = titles[name] || name;
 
@@ -127,6 +127,7 @@ function showPage(name) {
     returns:            () => loadReturnsList(),
     sales:              () => loadSalesList(),
     company:            () => loadCompanyInfo(),
+    profile:            loadProfile,
   };
   if (loaders[name]) loaders[name]();
 }
@@ -401,12 +402,19 @@ function renderAllTab(list) {
       .map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${ROLE_LABELS[r]}</option>`)
       .join('');
 
-    const actionCell = (isAdmin || isMe)
+    const roleCell = (isAdmin || isMe)
       ? `<td>${roleChip(u.role)} ${isMe ? '<small style="color:#888">(본인)</small>' : '(관리자)'}</td>`
       : `<td>
            <select class="role-select" id="sel-${u.id}">${roleOptions}</select>
            <button class="btn btn-xs btn-primary" onclick="changeRole('${u.id}')">변경</button>
          </td>`;
+
+    const manageCell = (!isAdmin && !isMe)
+      ? `<td style="white-space:nowrap">
+           <button class="btn btn-xs btn-ghost" onclick="adminChangePw('${u.id}','${escHtml(u.name)}')">비밀번호 변경</button>
+           <button class="btn btn-xs btn-danger" style="margin-left:.3rem" onclick="deleteUser('${u.id}','${escHtml(u.name)}')">삭제</button>
+         </td>`
+      : '<td></td>';
 
     return `
       <tr>
@@ -414,7 +422,8 @@ function renderAllTab(list) {
         <td>${escHtml(u.username || u.phone || '-')}</td>
         <td>${roleChip(u.role)}</td>
         <td>${fmtDate(u.created_at)}</td>
-        ${actionCell}
+        ${roleCell}
+        ${manageCell}
       </tr>
     `;
   }).join('');
@@ -431,6 +440,42 @@ window.approveUser = async function(userId, role) {
   }
 };
 
+// 관리자 비밀번호 강제 변경
+let _adminPwTargetId = null;
+window.adminChangePw = function(userId, userName) {
+  _adminPwTargetId = userId;
+  document.getElementById('admin-pw-modal-title').textContent = `${userName} 비밀번호 변경`;
+  document.getElementById('admin-pw-new').value     = '';
+  document.getElementById('admin-pw-confirm').value = '';
+  document.getElementById('modal-admin-pw').classList.remove('hidden');
+};
+
+window.submitAdminPw = async function() {
+  const pw  = document.getElementById('admin-pw-new').value;
+  const pw2 = document.getElementById('admin-pw-confirm').value;
+  if (!pw)       { toast('새 비밀번호를 입력하세요.', 'error'); return; }
+  if (pw !== pw2) { toast('비밀번호가 일치하지 않습니다.', 'error'); return; }
+  try {
+    await API.put(`/auth/users/${_adminPwTargetId}/password`, { password: pw });
+    document.getElementById('modal-admin-pw').classList.add('hidden');
+    toast('비밀번호가 변경됐습니다.', 'success');
+  } catch (err) { toast(err.message, 'error'); }
+};
+
+// 사용자 삭제
+window.deleteUser = async function(userId, userName) {
+  const ok = await confirmDialog(
+    `${userName} 계정을 삭제하시겠습니까?\n삭제된 계정은 복구할 수 없습니다.`,
+    '계정 삭제', '삭제', 'btn-danger'
+  );
+  if (!ok) return;
+  try {
+    await API.del(`/auth/users/${userId}`);
+    toast('사용자가 삭제되었습니다.', 'success');
+    loadUsers();
+  } catch (err) { toast(err.message, 'error'); }
+};
+
 // 권한 변경
 window.changeRole = async function(userId) {
   const sel  = document.getElementById(`sel-${userId}`);
@@ -444,6 +489,36 @@ window.changeRole = async function(userId) {
   } catch (err) {
     toast(err.message, 'error');
   }
+};
+
+// ══════════════════════════════════════════════
+//  내 정보 / 비밀번호 변경
+// ══════════════════════════════════════════════
+async function loadProfile() {
+  try {
+    const u = await API.get('/auth/profile');
+    document.getElementById('profile-name').textContent    = u.name    || '-';
+    document.getElementById('profile-username').textContent = u.username || u.phone || '-';
+    document.getElementById('profile-role').textContent    = ROLE_LABELS[u.role] || u.role;
+    document.getElementById('profile-created').textContent = fmtDate(u.created_at) || '-';
+    ['profile-cur-pw','profile-new-pw','profile-confirm-pw'].forEach(id =>
+      document.getElementById(id) && (document.getElementById(id).value = '')
+    );
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+window.saveProfilePw = async function() {
+  const cur = document.getElementById('profile-cur-pw').value;
+  const nw  = document.getElementById('profile-new-pw').value;
+  const nw2 = document.getElementById('profile-confirm-pw').value;
+  if (!cur)        { toast('현재 비밀번호를 입력하세요.', 'error'); return; }
+  if (!nw)         { toast('새 비밀번호를 입력하세요.', 'error'); return; }
+  if (nw !== nw2)  { toast('새 비밀번호가 일치하지 않습니다.', 'error'); return; }
+  try {
+    await API.put('/auth/profile/password', { current_password: cur, new_password: nw });
+    toast('비밀번호가 변경됐습니다. 다시 로그인해주세요.', 'success');
+    setTimeout(() => { localStorage.removeItem('token'); location.reload(); }, 1500);
+  } catch (err) { toast(err.message, 'error'); }
 };
 
 // ══════════════════════════════════════════════
@@ -478,6 +553,7 @@ let allPurchaseVendors  = [];
 let allSalesVendors     = [];
 let _currentVendor      = null;
 let _svendorFilter      = 'all';      // 'all' | 'important'
+let _pvendorTypeFilter  = 'all';      // 'all' | 'individual' | 'company'
 
 function vendorApiPath() {
   return _currentVendorType === 'purchase' ? '/purchase-vendors' : '/sales-vendors';
@@ -499,14 +575,19 @@ function setVendorCache(list) {
 async function loadVendors(type) {
   _currentVendorType = type;
   _svendorFilter = 'all';
+  _pvendorTypeFilter = 'all';
   // 필터 버튼 리셋
   document.querySelectorAll('.svendor-filter-btn').forEach(btn =>
     btn.classList.toggle('active', btn.dataset.sfilter === 'all')
+  );
+  document.querySelectorAll('.pvendor-type-btn').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.pvtype === 'all')
   );
   try {
     const list = await API.get(vendorApiPath());
     setVendorCache(list);
     if (type === 'sales') updateSvendorCounts(list);
+    if (type === 'purchase') updatePvendorCounts(list);
     renderVendorTable(list);
   } catch (err) { toast(err.message, 'error'); }
 }
@@ -516,15 +597,24 @@ function filterVendors() {
   const list = getVendorCache();
   const digits = q.replace(/\D/g, '');
   let filtered = q
-    ? list.filter(v =>
-        (v.company_name    || '').toLowerCase().includes(q) ||
-        (v.business_number || '').includes(digits)          ||
-        (v.phone           || '').includes(digits)
-      )
+    ? list.filter(v => {
+        const vt = v.vendor_type || 'company';
+        const name = vt === 'individual' ? (v.individual_name || '') : (v.company_name || '');
+        const phone = vt === 'individual' ? (v.individual_phone || '') : (v.phone || '');
+        return name.toLowerCase().includes(q)             ||
+               (v.company_name    || '').toLowerCase().includes(q) ||
+               (v.individual_name || '').toLowerCase().includes(q) ||
+               (v.business_number || '').includes(digits)          ||
+               phone.replace(/\D/g,'').includes(digits);
+      })
     : list;
   // 출고거래처: 중요 필터 적용
   if (_currentVendorType === 'sales' && _svendorFilter === 'important') {
     filtered = filtered.filter(v => v.is_important);
+  }
+  // 매입거래처: 유형 필터 적용
+  if (_currentVendorType === 'purchase' && _pvendorTypeFilter !== 'all') {
+    filtered = filtered.filter(v => (v.vendor_type || 'company') === _pvendorTypeFilter);
   }
   renderVendorTable(filtered);
 }
@@ -538,13 +628,22 @@ function updateSvendorCounts(list) {
   if (impEl)  impEl.textContent  = impCount;
 }
 
+function updatePvendorCounts(list) {
+  const allEl  = document.getElementById('pvendor-type-count-all');
+  const indEl  = document.getElementById('pvendor-type-count-individual');
+  const compEl = document.getElementById('pvendor-type-count-company');
+  if (allEl)  allEl.textContent  = list.length;
+  if (indEl)  indEl.textContent  = list.filter(v => (v.vendor_type || 'company') === 'individual').length;
+  if (compEl) compEl.textContent = list.filter(v => (v.vendor_type || 'company') === 'company').length;
+}
+
 function renderVendorTable(list) {
   const tbody = document.getElementById(vendorTbodyId());
-  const isSales = _currentVendorType === 'sales';
+  const isSales    = _currentVendorType === 'sales';
+  const isPurchase = _currentVendorType === 'purchase';
 
-  // 출고거래처: 중요 거래처 상단 정렬
   let sorted = isSales
-    ? [...list].sort((a, b) => (b.is_important || 0) - (a.is_important || 0) || a.company_name.localeCompare(b.company_name))
+    ? [...list].sort((a, b) => (b.is_important || 0) - (a.is_important || 0) || (a.company_name||'').localeCompare(b.company_name||''))
     : list;
 
   if (!sorted.length) {
@@ -552,7 +651,32 @@ function renderVendorTable(list) {
     tbody.innerHTML = `<tr><td colspan="${colspan}" class="empty">등록된 거래처가 없습니다.</td></tr>`;
     return;
   }
+
   tbody.innerHTML = sorted.map(v => {
+    if (isPurchase) {
+      const vt       = v.vendor_type || 'company';
+      const typeLabel = vt === 'individual' ? '개인' : '기업';
+      const typeCls   = vt === 'individual' ? 'pv-type-individual' : 'pv-type-company';
+      const displayName = vt === 'individual' ? (v.individual_name || '-') : (v.company_name || '-');
+      const phone    = vt === 'individual'
+        ? (v.individual_phone ? fmtPhone(v.individual_phone) : '-')
+        : (v.phone ? fmtPhone(v.phone) : '-');
+      const manager  = vt === 'company' ? escHtml(v.manager_name || '-') : '-';
+      const notes    = vt === 'individual' ? escHtml(truncate(v.individual_notes)) : escHtml(truncate(v.notes));
+      return `
+        <tr class="vendor-row" onclick="openVendorDetail('${v.id}')">
+          <td><span class="pv-type-badge ${typeCls}">${typeLabel}</span></td>
+          <td>${escHtml(displayName)}</td>
+          <td>${phone}</td>
+          <td>${manager}</td>
+          <td class="cell-notes" title="${notes}">${notes}</td>
+          <td>${escHtml(v.created_by_name || '-')}</td>
+          <td class="cell-date">${fmtDateTime(v.created_at)}</td>
+          <td>${escHtml(v.updated_by_name || '-')}</td>
+          <td class="cell-date">${fmtDateTime(v.updated_at)}</td>
+        </tr>
+      `;
+    }
     const starMark  = (isSales && v.is_important) ? '<span class="v-star-mark">★</span> ' : '';
     const nameCell  = isSales ? `<td>${escHtml(v.name || '-')}</td>` : '';
     return `
@@ -573,17 +697,29 @@ function renderVendorTable(list) {
 }
 
 // ── 등록 모달 열기 ──
-window.openVendorModal = function() {
+window.openVendorModal = function(prefill) {
   document.getElementById('form-vendor').reset();
   document.getElementById('v-id').value = '';
   document.getElementById('v-del-addr').disabled = false;
   document.getElementById('v-is-important').value = '0';
 
-  const isSales = _currentVendorType === 'sales';
+  // 매입거래처 이전 상태로 숨겨진 공통 필드 복원 (출고거래처 열 때 필요)
+  ['v-name','v-biz','v-phone-inp','v-reg-addr','v-del-addr','v-notes','v-remarks'].forEach(id =>
+    document.getElementById(id)?.closest('.field')?.classList.remove('hidden')
+  );
+  document.getElementById('v-ind-section')?.classList.add('hidden');
+  document.getElementById('v-comp-extra')?.classList.add('hidden');
+  const _pLbl = document.querySelector('#v-phone-inp')?.closest('.field')?.querySelector('label');
+  if (_pLbl) _pLbl.innerHTML = '전화번호 <span class="hint">숫자만 입력</span>';
+  const _rLbl = document.querySelector('#v-reg-addr')?.closest('.field')?.querySelector('label');
+  if (_rLbl) _rLbl.textContent = '사업자등록 주소';
+
+  const isSales    = _currentVendorType === 'sales';
+  const isPurchase = _currentVendorType === 'purchase';
   const label = isSales ? '출고거래처 등록' : '매입거래처 등록';
   document.getElementById('modal-vendor-title').textContent = label;
 
-  // 출고거래처 전용 섹션 표시/숨김
+  // 출고거래처 전용 섹션
   document.getElementById('v-sales-section')?.classList.toggle('hidden', !isSales);
   const starBtn = document.getElementById('btn-v-star');
   if (starBtn) {
@@ -592,9 +728,69 @@ window.openVendorModal = function() {
     starBtn.classList.remove('star-active');
   }
 
+  // 매입거래처 전용 섹션
+  const purchaseSection = document.getElementById('v-purchase-section');
+  if (purchaseSection) purchaseSection.classList.toggle('hidden', !isPurchase);
+
+  if (isPurchase) {
+    // 초기 유형: 기업
+    document.getElementById('v-vendor-type').value = prefill?.vendor_type || 'company';
+    pvSetModalType(prefill?.vendor_type || 'company');
+    if (prefill?.individual_name) document.getElementById('v-ind-name').value = prefill.individual_name;
+  }
+
   document.getElementById('modal-vendor').classList.remove('hidden');
-  document.getElementById('v-company').focus();
+  if (isPurchase) {
+    const focus = (document.getElementById('v-vendor-type')?.value === 'individual')
+      ? document.getElementById('v-ind-name')
+      : document.getElementById('v-company');
+    focus?.focus();
+  } else {
+    document.getElementById('v-company')?.focus();
+  }
 };
+
+function pvSetModalType(vt) {
+  document.getElementById('v-vendor-type').value = vt;
+  const isInd = vt === 'individual';
+  document.getElementById('v-ind-section')?.classList.toggle('hidden', !isInd);
+  document.getElementById('v-comp-extra')?.classList.toggle('hidden', isInd);
+
+  // 상호명 필드: 개인이면 숨김
+  const companyField = document.getElementById('v-company')?.closest('.field');
+  if (companyField) companyField.classList.toggle('hidden', isInd);
+
+  // 매입거래처에서 항상 숨길 공통 필드: 이름(대표자), 사업자번호, 배송주소, 특이사항, 비고
+  ['v-name','v-biz','v-del-addr','v-notes','v-remarks'].forEach(id =>
+    document.getElementById(id)?.closest('.field')?.classList.add('hidden')
+  );
+
+  // 전화번호·주소: 기업이면 표시(레이블 변경), 개인이면 숨김
+  const phoneField   = document.getElementById('v-phone-inp')?.closest('.field');
+  const regAddrField = document.getElementById('v-reg-addr')?.closest('.field');
+  if (phoneField)   phoneField.classList.toggle('hidden', isInd);
+  if (regAddrField) regAddrField.classList.toggle('hidden', isInd);
+  if (!isInd) {
+    const pLbl = phoneField?.querySelector('label');
+    if (pLbl) pLbl.innerHTML = '회사전화번호';
+    const rLbl = regAddrField?.querySelector('label');
+    if (rLbl) rLbl.textContent = '주소';
+  }
+
+  document.querySelectorAll('#v-purchase-section .pv-type-btn').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.vtype === vt)
+  );
+}
+
+function pvSetEditType(vt) {
+  document.getElementById('vde-vendor-type').value = vt;
+  const isInd = vt === 'individual';
+  document.getElementById('vde-ind-section')?.classList.toggle('hidden', !isInd);
+  document.getElementById('vde-comp-extra')?.classList.toggle('hidden', isInd);
+  document.querySelectorAll('#vde-purchase-section .pv-type-btn').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.vtypeEdit === vt)
+  );
+}
 
 // ── 상세 팝업 열기 ──
 window.openVendorDetail = async function(id) {
@@ -643,6 +839,31 @@ window.openVendorDetail = async function(id) {
         document.getElementById('vdd-bank-name').textContent      = v.bank_name      || '-';
         document.getElementById('vdd-account-number').textContent = fmtAccountNumber(v.account_number);
         document.getElementById('vdd-account-holder').textContent = v.account_holder || '-';
+      }
+    }
+
+    // 매입거래처 전용 섹션
+    const isPurchase = _currentVendorType === 'purchase';
+    const purchaseSection = document.getElementById('vdd-purchase-section');
+    if (purchaseSection) {
+      purchaseSection.classList.toggle('hidden', !isPurchase);
+      if (isPurchase) {
+        const vt = v.vendor_type || 'company';
+        document.getElementById('vdd-vendor-type-label').innerHTML =
+          vt === 'individual'
+            ? '<span class="pv-type-badge pv-type-individual">일반소비자</span>'
+            : '<span class="pv-type-badge pv-type-company">기업</span>';
+        document.getElementById('vdd-pind-section')?.classList.toggle('hidden', vt !== 'individual');
+        document.getElementById('vdd-pcomp-section')?.classList.toggle('hidden', vt !== 'company');
+        if (vt === 'individual') {
+          document.getElementById('vdd-ind-name').textContent    = v.individual_name  || '-';
+          document.getElementById('vdd-ind-phone').textContent   = v.individual_phone ? fmtPhone(v.individual_phone) : '-';
+          document.getElementById('vdd-ind-account').textContent = v.individual_account || '-';
+          document.getElementById('vdd-ind-notes').textContent   = v.individual_notes  || '-';
+        } else {
+          document.getElementById('vdd-mgr-name').textContent  = v.manager_name  || '-';
+          document.getElementById('vdd-mgr-phone').textContent = v.manager_phone ? fmtPhone(v.manager_phone) : '-';
+        }
       }
     }
 
@@ -708,6 +929,24 @@ function openDetailEditMode() {
     }
   }
 
+  // 매입거래처 전용
+  const isPurchaseDet = _currentVendorType === 'purchase';
+  document.getElementById('vde-purchase-section')?.classList.toggle('hidden', !isPurchaseDet);
+  if (isPurchaseDet) {
+    const vt = v.vendor_type || 'company';
+    document.getElementById('vde-vendor-type').value = vt;
+    pvSetEditType(vt);
+    if (vt === 'individual') {
+      document.getElementById('vde-ind-name').value    = v.individual_name  || '';
+      document.getElementById('vde-ind-phone').value   = v.individual_phone ? fmtPhone(v.individual_phone) : '';
+      document.getElementById('vde-ind-account').value = v.individual_account || '';
+      document.getElementById('vde-ind-notes').value   = v.individual_notes  || '';
+    } else {
+      document.getElementById('vde-mgr-name').value  = v.manager_name  || '';
+      document.getElementById('vde-mgr-phone').value = v.manager_phone ? fmtPhone(v.manager_phone) : '';
+    }
+  }
+
   setDetailMode('edit');
 }
 
@@ -744,6 +983,23 @@ async function saveVendorDetail() {
 
   const btn = document.getElementById('btn-vdd-save');
   btn.disabled = true;
+
+  // 매입거래처 전용 필드
+  if (_currentVendorType === 'purchase') {
+    const vt = document.getElementById('vde-vendor-type')?.value || 'company';
+    body.vendor_type = vt;
+    if (vt === 'individual') {
+      const indName = document.getElementById('vde-ind-name')?.value.trim();
+      if (!indName) { toast('이름을 입력하세요.', 'error'); btn.disabled = false; return; }
+      body.individual_name    = indName;
+      body.individual_phone   = document.getElementById('vde-ind-phone')?.value.replace(/\D/g,'') || null;
+      body.individual_account = document.getElementById('vde-ind-account')?.value.replace(/\D/g,'') || null;
+      body.individual_notes   = document.getElementById('vde-ind-notes')?.value.trim() || null;
+    } else {
+      body.manager_name  = document.getElementById('vde-mgr-name')?.value.trim() || null;
+      body.manager_phone = document.getElementById('vde-mgr-phone')?.value.replace(/\D/g,'') || null;
+    }
+  }
   try {
     await API.put(`${vendorApiPath()}/${id}`, body);
     toast('거래처가 수정되었습니다.', 'success');
@@ -779,7 +1035,9 @@ async function saveVendor() {
   const regAddr  = document.getElementById('v-reg-addr').value.trim();
   const delAddr  = sameAddr ? regAddr : document.getElementById('v-del-addr').value.trim();
 
-  if (!company)  { toast('상호명을 입력하세요.', 'error'); return; }
+  const _isPurchaseIndividual = _currentVendorType === 'purchase' &&
+    (document.getElementById('v-vendor-type')?.value || 'company') === 'individual';
+  if (!company && !_isPurchaseIndividual) { toast('상호명을 입력하세요.', 'error'); return; }
   if (bizRaw   && bizRaw.length   !== 10)                        { toast('사업자번호는 10자리여야 합니다.', 'error'); return; }
   if (phoneRaw && (phoneRaw.length < 10 || phoneRaw.length > 11)) { toast('전화번호는 10~11자리여야 합니다.', 'error'); return; }
 
@@ -801,6 +1059,25 @@ async function saveVendor() {
   }
 
   const saveBtn = document.getElementById('btn-vendor-save');
+
+  // 매입거래처 전용 필드
+  if (_currentVendorType === 'purchase') {
+    const vt = document.getElementById('v-vendor-type')?.value || 'company';
+    body.vendor_type = vt;
+    if (vt === 'individual') {
+      const indName = document.getElementById('v-ind-name')?.value.trim();
+      if (!indName) { toast('이름을 입력하세요.', 'error'); if(saveBtn) saveBtn.disabled=false; return; }
+      body.company_name      = null;
+      body.individual_name   = indName;
+      body.individual_phone  = document.getElementById('v-ind-phone')?.value.replace(/\D/g,'') || null;
+      body.individual_account= document.getElementById('v-ind-account')?.value.replace(/\D/g,'') || null;
+      body.individual_notes  = document.getElementById('v-ind-notes')?.value.trim() || null;
+    } else {
+      if (!company) { toast('회사명을 입력하세요.', 'error'); if(saveBtn) saveBtn.disabled=false; return; }
+      body.manager_name  = document.getElementById('v-mgr-name')?.value.trim() || null;
+      body.manager_phone = document.getElementById('v-mgr-phone')?.value.replace(/\D/g,'') || null;
+    }
+  }
   saveBtn.disabled = true;
   try {
     await API.post(vendorApiPath(), body);
@@ -939,6 +1216,27 @@ document.addEventListener('DOMContentLoaded', () => {
   // 검색 입력
   document.getElementById('pvendor-search')?.addEventListener('input', filterVendors);
   document.getElementById('svendor-search')?.addEventListener('input', filterVendors);
+
+  // 매입거래처 유형 탭
+  document.querySelectorAll('.pvendor-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _pvendorTypeFilter = btn.dataset.pvtype;
+      document.querySelectorAll('.pvendor-type-btn').forEach(b =>
+        b.classList.toggle('active', b === btn)
+      );
+      filterVendors();
+    });
+  });
+
+  // 거래처 등록 모달: 매입 유형 토글
+  document.querySelectorAll('#v-purchase-section .pv-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => pvSetModalType(btn.dataset.vtype));
+  });
+
+  // 거래처 수정 모달: 매입 유형 토글
+  document.querySelectorAll('#vde-purchase-section .pv-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => pvSetEditType(btn.dataset.vtypeEdit));
+  });
 
   // 출고거래처 중요 필터 버튼
   document.querySelectorAll('.svendor-filter-btn').forEach(btn => {

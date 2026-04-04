@@ -13,13 +13,14 @@ function makeVendorRouter(tableName) {
   const router = require('express').Router();
 
   const isSales = tableName === 'sales_vendors';
+  const isPurchase = tableName === 'purchase_vendors';
 
   // ── GET / ──
   router.get('/', auth('editor'), async (req, res) => {
     try {
       const orderBy = isSales
         ? 'ORDER BY v.is_important DESC, v.company_name'
-        : 'ORDER BY v.company_name';
+        : 'ORDER BY COALESCE(v.company_name, v.individual_name)';
       const rows = await getDB().allAsync(
         `SELECT v.*,
            u1.name AS created_by_name,
@@ -60,10 +61,21 @@ function makeVendorRouter(tableName) {
         registered_address, delivery_address, same_address,
         notes, remarks, contact_person, name,
         bank_name, account_number, account_holder, is_important,
+        // 매입거래처 전용
+        vendor_type, individual_name, individual_phone, individual_notes, individual_account,
+        manager_name, manager_phone,
       } = req.body;
 
-      if (!company_name?.trim())
-        return res.status(400).json({ error: '상호명은 필수입니다.' });
+      if (isPurchase) {
+        const vt = vendor_type || 'company';
+        if (vt === 'individual' && !individual_name?.trim())
+          return res.status(400).json({ error: '이름은 필수입니다.' });
+        if (vt === 'company' && !company_name?.trim())
+          return res.status(400).json({ error: '회사명은 필수입니다.' });
+      } else {
+        if (!company_name?.trim())
+          return res.status(400).json({ error: '상호명은 필수입니다.' });
+      }
 
       const bizDigits   = (business_number || '').replace(/\D/g, '');
       const phoneDigits = (phone           || '').replace(/\D/g, '');
@@ -79,11 +91,25 @@ function makeVendorRouter(tableName) {
       const del = same_address ? (registered_address || null) : (delivery_address || null);
       const accDigits = (account_number || '').replace(/\D/g, '') || null;
 
-      const extraCols = isSales ? ', contact_person, name, bank_name, account_number, account_holder, is_important' : '';
-      const extraPlaceholders = isSales ? ', ?, ?, ?, ?, ?, ?' : '';
-      const extraArgs = isSales
-        ? [contact_person?.trim() || null, name?.trim() || null, bank_name?.trim() || null, accDigits, account_holder?.trim() || null, is_important ? 1 : 0]
-        : [];
+      let extraCols = '', extraPlaceholders = '', extraArgs = [];
+      if (isSales) {
+        extraCols = ', contact_person, name, bank_name, account_number, account_holder, is_important';
+        extraPlaceholders = ', ?, ?, ?, ?, ?, ?';
+        extraArgs = [contact_person?.trim() || null, name?.trim() || null, bank_name?.trim() || null, accDigits, account_holder?.trim() || null, is_important ? 1 : 0];
+      } else if (isPurchase) {
+        const vt = vendor_type || 'company';
+        extraCols = ', vendor_type, individual_name, individual_phone, individual_notes, individual_account, manager_name, manager_phone';
+        extraPlaceholders = ', ?, ?, ?, ?, ?, ?, ?';
+        extraArgs = [
+          vt,
+          individual_name?.trim() || null,
+          (individual_phone || '').replace(/\D/g, '') || null,
+          individual_notes?.trim() || null,
+          (individual_account || '').replace(/\D/g, '') || null,
+          manager_name?.trim() || null,
+          (manager_phone || '').replace(/\D/g, '') || null,
+        ];
+      }
 
       await db.runAsync(
         `INSERT INTO ${tableName}
@@ -91,7 +117,7 @@ function makeVendorRouter(tableName) {
             registered_address, delivery_address, same_address,
             notes, remarks, created_at, created_by${extraCols})
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${extraPlaceholders})`,
-        [id, company_name.trim(),
+        [id, company_name?.trim() || (isPurchase && (vendor_type||'company') === 'individual' ? '' : null),
          bizDigits   || null,
          phoneDigits || null,
          registered_address?.trim() || null,
@@ -122,10 +148,21 @@ function makeVendorRouter(tableName) {
         registered_address, delivery_address, same_address,
         notes, remarks, contact_person, name,
         bank_name, account_number, account_holder, is_important,
+        // 매입거래처 전용
+        vendor_type, individual_name, individual_phone, individual_notes, individual_account,
+        manager_name, manager_phone,
       } = req.body;
 
-      if (company_name !== undefined && !company_name?.trim())
-        return res.status(400).json({ error: '상호명은 필수입니다.' });
+      if (isPurchase && vendor_type) {
+        const vt = vendor_type;
+        if (vt === 'individual' && individual_name !== undefined && !individual_name?.trim())
+          return res.status(400).json({ error: '이름은 필수입니다.' });
+        if (vt === 'company' && company_name !== undefined && !company_name?.trim())
+          return res.status(400).json({ error: '회사명은 필수입니다.' });
+      } else if (!isPurchase) {
+        if (company_name !== undefined && !company_name?.trim())
+          return res.status(400).json({ error: '상호명은 필수입니다.' });
+      }
 
       const bizDigits   = business_number !== undefined
         ? (business_number || '').replace(/\D/g, '') : null;
@@ -147,15 +184,29 @@ function makeVendorRouter(tableName) {
       const accDigits = account_number !== undefined
         ? (account_number || '').replace(/\D/g, '') || null : null;
 
-      const extraSet  = isSales ? ', contact_person=?, name=?, bank_name=?, account_number=?, account_holder=?, is_important=?' : '';
-      const extraArgs = isSales ? [
-        contact_person !== undefined ? (contact_person?.trim() || null) : old.contact_person,
-        name           !== undefined ? (name?.trim()           || null) : old.name,
-        bank_name    !== undefined ? (bank_name?.trim()    || null) : old.bank_name,
-        account_number !== undefined ? accDigits : old.account_number,
-        account_holder !== undefined ? (account_holder?.trim() || null) : old.account_holder,
-        is_important !== undefined ? (is_important ? 1 : 0) : old.is_important,
-      ] : [];
+      let extraSet = '', extraArgs = [];
+      if (isSales) {
+        extraSet = ', contact_person=?, name=?, bank_name=?, account_number=?, account_holder=?, is_important=?';
+        extraArgs = [
+          contact_person !== undefined ? (contact_person?.trim() || null) : old.contact_person,
+          name           !== undefined ? (name?.trim()           || null) : old.name,
+          bank_name    !== undefined ? (bank_name?.trim()    || null) : old.bank_name,
+          account_number !== undefined ? accDigits : old.account_number,
+          account_holder !== undefined ? (account_holder?.trim() || null) : old.account_holder,
+          is_important !== undefined ? (is_important ? 1 : 0) : old.is_important,
+        ];
+      } else if (isPurchase) {
+        extraSet = ', vendor_type=?, individual_name=?, individual_phone=?, individual_notes=?, individual_account=?, manager_name=?, manager_phone=?';
+        extraArgs = [
+          vendor_type         !== undefined ? (vendor_type || 'company') : old.vendor_type,
+          individual_name     !== undefined ? (individual_name?.trim()   || null) : old.individual_name,
+          individual_phone    !== undefined ? ((individual_phone||'').replace(/\D/g,'')||null) : old.individual_phone,
+          individual_notes    !== undefined ? (individual_notes?.trim()  || null) : old.individual_notes,
+          individual_account  !== undefined ? ((individual_account||'').replace(/\D/g,'')||null) : old.individual_account,
+          manager_name        !== undefined ? (manager_name?.trim()      || null) : old.manager_name,
+          manager_phone       !== undefined ? ((manager_phone||'').replace(/\D/g,'')||null) : old.manager_phone,
+        ];
+      }
 
       await db.runAsync(
         `UPDATE ${tableName}
@@ -164,7 +215,7 @@ function makeVendorRouter(tableName) {
              notes=?, remarks=?, updated_at=?, updated_by=?${extraSet}
          WHERE id=?`,
         [
-          company_name !== undefined ? company_name.trim() : old.company_name,
+          company_name !== undefined ? (company_name?.trim() || (isPurchase && (vendor_type||old.vendor_type||'company') === 'individual' ? '' : null)) : old.company_name,
           bizDigits   !== null ? (bizDigits   || null) : old.business_number,
           phoneDigits !== null ? (phoneDigits || null) : old.phone,
           newReg, newDel, newSame,

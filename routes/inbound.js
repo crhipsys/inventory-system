@@ -15,56 +15,52 @@ const { writeAuditLog, moveToTrash } = require('../middleware/audit');
  *  conditionType: 'normal'|'defective'|'disposal'
  */
 async function addToInventory(db, manufacturer, modelName, category, qty, price, vendorId, spec = '', conditionType = 'normal') {
-  const n         = nowStr();
-  const specVal   = (spec || '').toLowerCase().trim();
-  const prodType  = specVal ? 'spec' : 'general';
+  const n        = nowStr();
+  const specVal  = (spec || '').toLowerCase().trim();
+  const prodType = specVal ? 'spec' : 'general';
+  const ct       = conditionType || 'normal';
+
   const inv = await db.getAsync(
-    'SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ? AND spec = ?',
-    [manufacturer, modelName, specVal]
+    `SELECT * FROM inventory WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
+    [manufacturer, modelName, specVal, ct]
   );
 
-  // 어느 stock 컬럼에 반영할지
-  const stockCol = conditionType === 'defective' ? 'defective_stock'
-                 : conditionType === 'disposal'  ? 'disposal_stock'
-                 : 'normal_stock';
-
   if (!inv) {
-    const initNormal    = conditionType === 'normal'    ? qty : 0;
-    const initDefective = conditionType === 'defective' ? qty : 0;
-    const initDisposal  = conditionType === 'disposal'  ? qty : 0;
+    // 폐기는 이동평균 없음
+    const initAvg = ct === 'disposal' ? 0 : price;
     await db.runAsync(
       `INSERT INTO inventory
-         (id, category, product_type, spec, manufacturer, model_name,
-          current_stock, avg_purchase_price, total_inbound, total_outbound,
-          normal_stock, defective_stock, disposal_stock, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
-      [uuidv4(), category || null, prodType, specVal, manufacturer, modelName,
-       qty, price, qty, initNormal, initDefective, initDisposal, n]
+         (id, category, product_type, spec, manufacturer, model_name, condition_type,
+          current_stock, avg_purchase_price, total_inbound, total_outbound, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      [uuidv4(), category || null, prodType, specVal, manufacturer, modelName, ct,
+       qty, initAvg, qty, n]
     );
-    return { oldAvg: 0, newAvg: price, pctChange: 0 };
+    return { oldAvg: 0, newAvg: initAvg, pctChange: 0 };
   }
 
   const wasZero  = inv.current_stock === 0;
   const newStock = inv.current_stock + qty;
   const oldAvg   = inv.avg_purchase_price;
-  // 재고 소진 후 재매입이면 이동평균 리셋
-  const newAvg   = wasZero
-    ? price
+  // 폐기는 이동평균 계산 제외
+  const newAvg   = ct === 'disposal' ? 0
+    : wasZero ? price
     : (newStock > 0 ? (inv.current_stock * oldAvg + qty * price) / newStock : 0);
   const pctChange = oldAvg > 0 ? Math.abs(newAvg - oldAvg) / oldAvg : 0;
 
-  const avgReason = wasZero ? '재고 소진 후 재매입 - 평균 리셋' : '입고';
-  if (Math.abs(newAvg - oldAvg) > 0.001) {
+  if (ct !== 'disposal' && Math.abs(newAvg - oldAvg) > 0.001) {
+    const avgReason = wasZero ? '재고 소진 후 재매입 - 평균 리셋' : '입고';
     await db.runAsync(
-      `INSERT INTO avg_price_history (id, manufacturer, model_name, spec, old_avg, new_avg, changed_at, reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [uuidv4(), manufacturer, modelName, specVal, oldAvg, newAvg, n, avgReason]
+      `INSERT INTO avg_price_history
+         (id, manufacturer, model_name, spec, condition_type, old_avg, new_avg, changed_at, reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [uuidv4(), manufacturer, modelName, specVal, ct, oldAvg, newAvg, n, avgReason]
     );
   }
   await db.runAsync(
-    `UPDATE inventory SET current_stock=?, avg_purchase_price=?, total_inbound=total_inbound+?,
-         ${stockCol}=${stockCol}+?, updated_at=? WHERE id=?`,
-    [newStock, newAvg, qty, qty, n, inv.id]
+    `UPDATE inventory SET current_stock=?, avg_purchase_price=?,
+       total_inbound=total_inbound+?, updated_at=? WHERE id=?`,
+    [newStock, newAvg, qty, n, inv.id]
   );
   return { oldAvg, newAvg, pctChange };
 }
@@ -72,38 +68,39 @@ async function addToInventory(db, manufacturer, modelName, category, qty, price,
 /** 재고 차감 + 이동평균 역산 */
 async function removeFromInventory(db, manufacturer, modelName, qty, price, spec = '', conditionType = 'normal') {
   const specVal = (spec || '').toLowerCase().trim();
+  const ct      = conditionType || 'normal';
   const inv = await db.getAsync(
-    'SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ? AND spec = ?',
-    [manufacturer, modelName, specVal]
+    `SELECT * FROM inventory WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
+    [manufacturer, modelName, specVal, ct]
   );
   if (!inv) return;
 
-  const stockCol = conditionType === 'defective' ? 'defective_stock'
-                 : conditionType === 'disposal'  ? 'disposal_stock'
-                 : 'normal_stock';
-
   const newStock = Math.max(0, inv.current_stock - qty);
   let newAvg = inv.avg_purchase_price;
-  if (inv.current_stock > qty) {
-    newAvg = (inv.current_stock * inv.avg_purchase_price - qty * price) / (inv.current_stock - qty);
-    if (newAvg < 0) newAvg = 0;
-  } else if (newStock === 0) {
-    newAvg = 0;
+  if (ct !== 'disposal') {
+    if (inv.current_stock > qty) {
+      newAvg = (inv.current_stock * inv.avg_purchase_price - qty * price) / (inv.current_stock - qty);
+      if (newAvg < 0) newAvg = 0;
+    } else if (newStock === 0) {
+      newAvg = 0;
+    }
   }
   await db.runAsync(
     `UPDATE inventory SET current_stock=?, avg_purchase_price=?,
-         total_inbound=MAX(0, total_inbound-?),
-         ${stockCol}=MAX(0, ${stockCol}-?), updated_at=? WHERE id=?`,
-    [newStock, newAvg, qty, qty, nowStr(), inv.id]
+       total_inbound=MAX(0, total_inbound-?), updated_at=? WHERE id=?`,
+    [newStock, newAvg, qty, nowStr(), inv.id]
   );
 }
 
 /** 매입가 변경 → 이동평균 재계산 */
-async function recalcAvgForPriceChange(db, manufacturer, modelName, qty, oldPrice, newPrice, spec = '') {
+async function recalcAvgForPriceChange(db, manufacturer, modelName, qty, oldPrice, newPrice, spec = '', conditionType = 'normal') {
   const specVal = (spec || '').toLowerCase().trim();
+  const ct      = conditionType || 'normal';
+  if (ct === 'disposal') return { oldAvg: 0, newAvg: 0, pctChange: 0 };
+
   const inv = await db.getAsync(
-    'SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ? AND spec = ?',
-    [manufacturer, modelName, specVal]
+    `SELECT * FROM inventory WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
+    [manufacturer, modelName, specVal, ct]
   );
   if (!inv || inv.current_stock <= 0) return { oldAvg: 0, newAvg: 0, pctChange: 0 };
 
@@ -114,9 +111,10 @@ async function recalcAvgForPriceChange(db, manufacturer, modelName, qty, oldPric
 
   if (Math.abs(newAvg - oldAvg) > 0.001) {
     await db.runAsync(
-      `INSERT INTO avg_price_history (id, manufacturer, model_name, spec, old_avg, new_avg, changed_at, reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, '매입가수정')`,
-      [uuidv4(), manufacturer, modelName, specVal, oldAvg, newAvg, nowStr()]
+      `INSERT INTO avg_price_history
+         (id, manufacturer, model_name, spec, condition_type, old_avg, new_avg, changed_at, reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '매입가수정')`,
+      [uuidv4(), manufacturer, modelName, specVal, ct, oldAvg, newAvg, nowStr()]
     );
   }
   await db.runAsync(
@@ -215,7 +213,7 @@ router.put('/items/:itemId/price', auth('editor'), async (req, res) => {
     if (item.status === 'completed' || item.status === 'priority') {
       const result = await recalcAvgForPriceChange(
         db, item.manufacturer, item.model_name, item.quantity, oldPrice, newPrice,
-        item.spec || ''
+        item.spec || '', item.condition_type || 'normal'
       );
       pctChange = result.pctChange;
     }
@@ -270,6 +268,27 @@ router.put('/items/:itemId/status', auth('editor'), async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// PUT /items/:itemId/smartstore — 스마트스토어 등록 표시 토글
+router.put('/items/:itemId/smartstore', auth('editor'), async (req, res) => {
+  try {
+    const db   = getDB();
+    const item = await db.getAsync(
+      'SELECT * FROM inbound WHERE id = ? AND is_deleted = 0', [req.params.itemId]
+    );
+    if (!item) return res.status(404).json({ error: '품목을 찾을 수 없습니다.' });
+    if (item.status !== 'completed')
+      return res.status(400).json({ error: '매입완료 상태인 품목만 스마트스토어 등록할 수 있습니다.' });
+
+    const register = req.body.is_smartstore ? 1 : 0;
+    const n        = nowStr();
+    await db.runAsync(
+      'UPDATE inbound SET is_smartstore=?, smartstore_registered_at=?, smartstore_registered_by=? WHERE id=?',
+      [register, register ? n : null, register ? req.user.id : null, item.id]
+    );
+    res.json({ is_smartstore: register, smartstore_registered_at: register ? n : null });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ══════════════════════════════════════════════
 //  주문 CRUD
 // ══════════════════════════════════════════════
@@ -309,12 +328,13 @@ router.get('/', auth('editor'), async (req, res) => {
 
       result.push({
         ...order,
-        vendor_name: order.vendor_name || order.vendor_company || '-',
+        vendor_name:   order.vendor_name || order.vendor_company || '-',
         items,
-        item_count:  items.length,
-        total_price: totalPrice,
+        item_count:    items.length,
+        total_price:   totalPrice,
         statuses,
-        summary:     byGroup,
+        summary:       byGroup,
+        has_smartstore: items.some(i => i.is_smartstore),
       });
     }
     res.json(result);
@@ -327,7 +347,9 @@ router.get('/:id', auth('editor'), async (req, res) => {
     const db    = getDB();
     const order = await db.getAsync(
       `SELECT o.*,
-         pv.company_name AS vendor_company,
+         pv.vendor_type, pv.company_name AS vendor_company,
+         pv.individual_name, pv.individual_phone, pv.individual_notes, pv.individual_account,
+         pv.manager_name, pv.manager_phone, pv.registered_address AS vendor_address, pv.phone AS vendor_company_phone,
          u1.name AS created_by_name,
          u2.name AS updated_by_name
        FROM inbound_orders o

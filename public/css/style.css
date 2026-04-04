@@ -609,8 +609,8 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .ib-card-top {
   display: flex; align-items: center; gap: .75rem; margin-bottom: .4rem; flex-wrap: wrap;
 }
-.ib-card-date   { font-weight: 700; font-size: .9rem; color: var(--text); }
-.ib-card-vendor { color: var(--gray-600); font-size: .85rem; }
+.ib-card-date   { color: var(--gray-500); font-size: .82rem; }
+.ib-card-vendor { font-weight: 700; font-size: 18px; color: var(--text); }
 .ib-card-badges { display: flex; gap: .3rem; flex-wrap: wrap; margin-left: auto; }
 .ib-card-summary { font-size: .82rem; color: var(--gray-800); margin-bottom: .35rem; }
 .ib-card-total  { font-size: .82rem; color: var(--gray-600); }
@@ -624,6 +624,23 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .ib-badge-completed { background: #d3f9d8; color: #1b5e20; }
 .ib-badge-pending   { background: #e9ecef; color: #495057; }
 .ib-badge-priority  { background: #fff3cd; color: #856404; }
+
+/* 스마트스토어 버튼 */
+.btn-ss-off {
+  background: transparent; color: #16a34a;
+  border: 1px solid #16a34a; font-size: .75rem;
+  padding: .2rem .55rem; border-radius: var(--radius);
+  cursor: pointer; white-space: nowrap;
+}
+.btn-ss-off:hover { background: #f0fdf4; }
+.btn-ss-on {
+  background: #16a34a; color: #fff;
+  border: 1px solid #16a34a; font-size: .75rem;
+  padding: .2rem .55rem; border-radius: var(--radius);
+  cursor: pointer; white-space: nowrap;
+}
+.btn-ss-on:hover { background: #15803d; }
+.ib-ss-icon { margin-left: .25rem; font-size: .9rem; vertical-align: middle; }
 
 /* 상세 헤더 */
 .ib-detail-header {
@@ -874,6 +891,16 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .ob-profit-pos { color: #2f9e44; }
 .ob-profit-neg { color: #e03131; }
 
+/* 출고 condition_type 뱃지 */
+.ob-cond-badge {
+  display: inline-block; font-size: .72rem; font-weight: 600;
+  padding: .15rem .45rem; border-radius: 99px; white-space: nowrap;
+}
+.ob-cond-normal    { background: #ebfbee; color: #2b8a3e; }
+.ob-cond-defective { background: #fff5f5; color: #e03131; }
+.ob-cond-disposal  { background: #f3f0ff; color: #7048e8; }
+.ob-cell-cond { text-align: center; }
+
 /* 출고 상세 그리드 */
 .ob-detail-grid {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: .65rem; margin-bottom: .5rem;
@@ -1012,8 +1039,8 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .stmt-party { flex: 1; border: 1px solid var(--gray-300); border-radius: var(--radius); padding: .65rem; }
 .stmt-party-title { font-weight: 700; margin-bottom: .4rem; border-bottom: 1px solid var(--gray-200); padding-bottom: .3rem; font-size: .88rem; }
 .stmt-party-tbl { width: 100%; border-collapse: collapse; font-size: .8rem; }
-.stmt-party-tbl td { padding: .2rem .3rem; }
-.stmt-party-tbl td:first-child { color: var(--gray-500); width: 70px; }
+.stmt-party-tbl td { padding: .25rem .4rem; vertical-align: top; }
+.stmt-party-tbl td:first-child { background: #eef2ff; color: var(--primary); width: 80px; font-weight: 600; white-space: nowrap; border-right: 1px solid #c5d0f5; }
 .stmt-items-tbl { width: 100%; border-collapse: collapse; }
 .stmt-items-tbl th, .stmt-items-tbl td { border: 1px solid var(--gray-300); padding: .4rem .6rem; font-size: .82rem; }
 .stmt-items-tbl th { background: var(--gray-50); font-weight: 700; text-align: center; }
@@ -1212,7 +1239,8 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 
 /* ── 비고 셀 ── */
 .inv-notes-cell {
-  max-width: 120px; overflow: hidden; text-overflow: ellipsis;
+  max-width: 140px; min-width: 80px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--gray-600); font-style: italic; font-size: .78rem;
 }
 
@@ -1235,7 +1263,38 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 /* ── 스펙 컬럼 ── */
 .inv-col-spec { min-width: 56px; color: var(--gray-600); font-size: .78rem; }
 
-/* ── 구분/브랜드 태그 ── */
+/* ── 구분 컬러 뱃지 ── */
+.inv-cat-badge {
+  display: inline-block;
+  font-size: .73rem; font-weight: 700;
+  padding: 2px 8px; border-radius: 4px;
+}
+
+/* ── 구분 필터 버튼 바 ── */
+.inv-cat-filter-bar {
+  display: flex; flex-wrap: wrap; gap: .3rem; margin: .35rem 0;
+}
+.inv-cat-btn {
+  font-size: .74rem; padding: 2px 10px; border-radius: 99px;
+  border: 1px solid var(--gray-200); background: white; color: var(--gray-500);
+  cursor: pointer; transition: all .15s; font-weight: 500; line-height: 1.6;
+}
+.inv-cat-btn:hover {
+  background: var(--icb-bg, var(--gray-100));
+  color: var(--icb-col, var(--gray-700));
+  border-color: var(--icb-col, var(--gray-300));
+}
+.inv-cat-btn.active {
+  background: var(--icb-bg, var(--gray-800));
+  color: var(--icb-col, white);
+  border-color: var(--icb-col, var(--gray-800));
+  font-weight: 700;
+}
+.inv-cat-btn[data-catfilter="all"].active {
+  background: var(--gray-800); color: white; border-color: var(--gray-800);
+}
+
+/* ── 구분/브랜드 태그 (레거시 호환) ── */
 .inv-cat-tag {
   display: inline-block;
   background: var(--gray-100); color: var(--gray-800);
@@ -1656,3 +1715,78 @@ body.viewer-mode .db-editor-only { display: none !important; }
   .db-kpi-grid     { grid-template-columns: 1fr; }
   .db-range-controls .btn { font-size: .75rem; }
 }
+
+/* ══ 매입거래처 유형 탭 ══════════════════════════════════════════ */
+.pvendor-type-tabs {
+  display: flex; gap: .4rem;
+  padding: .5rem 1rem; border-bottom: 1px solid var(--gray-200);
+  background: var(--gray-50);
+}
+.pvendor-type-btn {
+  padding: .3rem .9rem; border-radius: 99px; border: 1px solid var(--gray-300);
+  background: white; font-size: .82rem; cursor: pointer; color: var(--gray-700);
+  transition: all .15s;
+}
+.pvendor-type-btn.active {
+  background: var(--primary); color: white; border-color: var(--primary); font-weight: 600;
+}
+.pvendor-type-btn:hover:not(.active) { background: var(--gray-100); }
+
+/* 거래처 유형 배지 */
+.pv-type-badge {
+  display: inline-block; font-size: .72rem; font-weight: 600;
+  padding: .1rem .4rem; border-radius: 99px; white-space: nowrap;
+}
+.pv-type-individual { background: #fff3bf; color: #e67700; }
+.pv-type-company    { background: #dbe4ff; color: #3b5bdb; }
+
+/* 거래처 유형 선택 토글 */
+.pv-type-toggle {
+  display: flex; gap: 0; border: 1px solid var(--gray-300); border-radius: 6px;
+  overflow: hidden; width: fit-content; margin-bottom: .75rem;
+}
+.pv-type-btn {
+  padding: .35rem 1rem; border: none; background: white;
+  font-size: .85rem; cursor: pointer; color: var(--gray-700); transition: all .15s;
+}
+.pv-type-btn:not(:last-child) { border-right: 1px solid var(--gray-300); }
+.pv-type-btn.active { background: var(--primary); color: white; font-weight: 600; }
+.pv-type-btn:hover:not(.active) { background: var(--gray-100); }
+
+/* ══ 입고 거래처 인라인 검색 ══════════════════════════════════════ */
+.ib-vendor-wrap { position: relative; }
+.ib-vendor-wrap input { width: 100%; }
+.ib-vendor-dd {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: white; border: 1px solid var(--gray-300); border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.12); z-index: 200;
+  max-height: 260px; overflow-y: auto;
+}
+.ib-vendor-dd-item {
+  padding: .5rem .8rem; cursor: pointer; display: flex; align-items: center; gap: .5rem;
+  font-size: .85rem; border-bottom: 1px solid var(--gray-100);
+  transition: background .1s;
+}
+.ib-vendor-dd-item:last-child { border-bottom: none; }
+.ib-vendor-dd-item:hover { background: var(--gray-50); }
+.ib-vendor-dd-item.dd-new {
+  color: var(--primary); font-weight: 600;
+  border-top: 1px solid var(--gray-200);
+}
+.ib-vendor-dd-empty { padding: .6rem .8rem; color: var(--gray-500); font-size: .82rem; }
+.ib-vdd-sub { color: var(--gray-500); font-size: .78rem; }
+
+/* ══ 출고 상세 Sticky Footer ══════════════════════════════════════ */
+.ob-sticky-footer {
+  position: sticky; bottom: 0; left: 0; right: 0;
+  background: white; border-top: 2px solid var(--gray-200);
+  box-shadow: 0 -2px 12px rgba(0,0,0,.08);
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 1.5rem; padding: .75rem 1.5rem;
+  z-index: 10;
+}
+.ob-sf-item { display: flex; align-items: center; gap: .4rem; }
+.ob-sf-label { font-size: .82rem; color: var(--gray-600); }
+.ob-sf-val { font-weight: 700; font-size: .95rem; color: var(--text); }
+.ob-sf-sep { color: var(--gray-400); font-size: 1rem; font-weight: 400; }
+.ob-sf-total .ob-sf-val { font-size: 1.05rem; color: var(--primary); }

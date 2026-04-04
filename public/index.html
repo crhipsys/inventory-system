@@ -100,10 +100,13 @@
           <span class="nav-icon">💰</span><span class="nav-text">매출/수익</span>
         </a></li>
         <li class="nav-admin"><a class="nav-link" data-page="users">
-          <span class="nav-icon">👤</span><span class="nav-text">사용자 관리</span>
+          <span class="nav-icon">👥</span><span class="nav-text">사용자 관리</span>
         </a></li>
         <li><a class="nav-link" data-page="company">
           <span class="nav-icon">🏢</span><span class="nav-text">회사 정보</span>
+        </a></li>
+        <li><a class="nav-link" data-page="profile">
+          <span class="nav-icon">👤</span><span class="nav-text">내 정보</span>
         </a></li>
       </ul>
 
@@ -301,6 +304,21 @@
             <button class="tab-btn" data-invtab="normal">정상재고 <span class="tab-count" id="invtab-normal">0</span></button>
             <button class="tab-btn" data-invtab="defective">불량재고 <span class="tab-count" id="invtab-defective">0</span></button>
             <button class="tab-btn" data-invtab="disposal">폐기재고 <span class="tab-count" id="invtab-disposal">0</span></button>
+            <button class="tab-btn" data-invtab="smartstore">🛒 스마트스토어 <span class="tab-count" id="invtab-smartstore">0</span></button>
+          </div>
+
+          <!-- 구분 필터 -->
+          <div class="inv-cat-filter-bar">
+            <button class="inv-cat-btn active" data-catfilter="all">전체 <span id="icf-all">0</span></button>
+            <button class="inv-cat-btn" data-catfilter="CPU"  style="--icb-bg:#e0f6ff;--icb-col:#0369a1">CPU <span id="icf-CPU">0</span></button>
+            <button class="inv-cat-btn" data-catfilter="RAM"  style="--icb-bg:#d1fae5;--icb-col:#047857">RAM <span id="icf-RAM">0</span></button>
+            <button class="inv-cat-btn" data-catfilter="VGA"  style="--icb-bg:#ffedd5;--icb-col:#c2410c">VGA <span id="icf-VGA">0</span></button>
+            <button class="inv-cat-btn" data-catfilter="SSD"  style="--icb-bg:#dbeafe;--icb-col:#1d4ed8">SSD <span id="icf-SSD">0</span></button>
+            <button class="inv-cat-btn" data-catfilter="NVMe" style="--icb-bg:#ede9fe;--icb-col:#6d28d9">NVMe <span id="icf-NVMe">0</span></button>
+            <button class="inv-cat-btn" data-catfilter="M.2"  style="--icb-bg:#fce7f3;--icb-col:#be185d">M.2 <span id="icf-M2">0</span></button>
+            <button class="inv-cat-btn" data-catfilter="HDD"  style="--icb-bg:#fef9c3;--icb-col:#92400e">HDD <span id="icf-HDD">0</span></button>
+            <button class="inv-cat-btn" data-catfilter="MB"   style="--icb-bg:#fee2e2;--icb-col:#dc2626">MB <span id="icf-MB">0</span></button>
+            <button class="inv-cat-btn" data-catfilter="기타" style="--icb-bg:#f1f5f9;--icb-col:#475569">기타 <span id="icf-기타">0</span></button>
           </div>
 
           <!-- 테이블 -->
@@ -317,17 +335,16 @@
                   <th>매입완료</th>
                   <th>우선등록 ⚠️</th>
                   <th>매입미완료</th>
-                  <th>불량재고</th>
-                  <th>폐기재고</th>
                   <th>총입고</th>
                   <th>총출고</th>
                   <th class="price-col">평균매입가</th>
                   <th>최근거래처</th>
                   <th>비고</th>
+                  <th>🛒</th>
                 </tr>
               </thead>
               <tbody id="inv-tbody">
-                <tr><td colspan="16" class="empty">조회 중...</td></tr>
+                <tr><td colspan="15" class="empty">조회 중...</td></tr>
               </tbody>
             </table>
           </div>
@@ -413,14 +430,6 @@
                 <button class="btn btn-ghost btn-xs" id="btn-inv-detail-close">✕</button>
               </div>
               <div class="inv-detail-body">
-                <!-- 비고 -->
-                <div class="inv-notes-wrap">
-                  <label class="inv-notes-label">비고</label>
-                  <textarea id="inv-detail-notes" class="form-control inv-notes-ta"
-                    rows="2" placeholder="비고 입력 후 자동저장됩니다..."></textarea>
-                  <div id="inv-detail-notes-status" class="inv-notes-saved"></div>
-                </div>
-
                 <!-- 탭 -->
                 <div class="tab-bar inv-dtab-bar">
                   <button class="tab-btn active" data-dtab="inbound">입고 이력</button>
@@ -512,9 +521,9 @@
                 </div>
                 <div class="field">
                   <label>거래처</label>
-                  <div class="input-with-btn">
-                    <input id="ib-vendor-name" type="text" placeholder="거래처명 (없으면 자동 등록)" />
-                    <button class="btn btn-sm btn-ghost" id="btn-ib-pick-vendor" type="button">검색</button>
+                  <div class="ib-vendor-wrap">
+                    <input id="ib-vendor-name" type="text" placeholder="이름 또는 회사명 검색..." autocomplete="off" />
+                    <div id="ib-vendor-dropdown" class="ib-vendor-dd hidden"></div>
                   </div>
                   <input type="hidden" id="ib-vendor-id" />
                 </div>
@@ -758,6 +767,7 @@
                       <th style="min-width:90px">브랜드</th>
                       <th style="min-width:130px">모델명</th>
                       <th style="min-width:120px">스펙</th>
+                      <th style="width:60px">상태</th>
                       <th style="width:70px">수량</th>
                       <th style="min-width:110px">판매가</th>
                       <th style="min-width:100px">소계</th>
@@ -770,7 +780,7 @@
                   <tbody id="ob-items-tbody"></tbody>
                   <tfoot>
                     <tr>
-                      <td colspan="8" style="text-align:right;font-weight:700;padding:.5rem 1rem">합계</td>
+                      <td colspan="9" style="text-align:right;font-weight:700;padding:.5rem 1rem">합계</td>
                       <td id="ob-foot-tax" style="text-align:right;padding:.5rem .5rem;font-weight:600">0원</td>
                       <td id="ob-foot-total" style="text-align:right;padding:.5rem .5rem;font-weight:700">0원</td>
                       <td colspan="2"></td>
@@ -782,7 +792,7 @@
           </div><!-- /#ob-form -->
 
           <!-- ── 서브: 출고 상세 ── -->
-          <div id="ob-detail" class="hidden">
+          <div id="ob-detail" class="hidden" style="display:flex;flex-direction:column;height:100%">
             <div class="page-toolbar">
               <button class="btn btn-ghost" id="btn-ob-back-detail">← 목록으로</button>
               <div style="flex:1"></div>
@@ -791,7 +801,14 @@
               <button class="btn btn-primary" id="btn-ob-edit">수정</button>
               <button class="btn btn-danger"  id="btn-ob-delete">삭제</button>
             </div>
-            <div id="ob-detail-content"></div>
+            <div id="ob-detail-content" style="flex:1;overflow-y:auto;padding-bottom:80px"></div>
+            <div id="ob-sticky-footer" class="ob-sticky-footer hidden">
+              <div class="ob-sf-item"><span class="ob-sf-label">공급가액</span><span class="ob-sf-val" id="ob-sf-supply">-</span></div>
+              <div class="ob-sf-sep">+</div>
+              <div class="ob-sf-item"><span class="ob-sf-label">세액</span><span class="ob-sf-val" id="ob-sf-tax">-</span></div>
+              <div class="ob-sf-sep">=</div>
+              <div class="ob-sf-item ob-sf-total"><span class="ob-sf-label">합계금액</span><span class="ob-sf-val" id="ob-sf-grand">-</span></div>
+            </div>
           </div>
 
         </div><!-- /#page-outbound -->
@@ -969,17 +986,23 @@
           <div class="page-toolbar">
             <div class="search-wrap">
               <input id="pvendor-search" type="text"
-                placeholder="상호명, 사업자번호, 전화번호 검색..."
+                placeholder="이름, 회사명, 전화번호 검색..."
                 class="search-input" />
             </div>
             <button class="btn btn-primary" id="btn-pvendor-add">+ 거래처 등록</button>
           </div>
+          <!-- 유형 탭 -->
+          <div class="pvendor-type-tabs">
+            <button class="pvendor-type-btn active" data-pvtype="all">전체(<span id="pvendor-type-count-all">0</span>)</button>
+            <button class="pvendor-type-btn" data-pvtype="individual">일반소비자(<span id="pvendor-type-count-individual">0</span>)</button>
+            <button class="pvendor-type-btn" data-pvtype="company">기업(<span id="pvendor-type-count-company">0</span>)</button>
+          </div>
           <div class="table-wrap">
             <table class="tbl">
-              <thead>
+              <thead id="pvendor-thead">
                 <tr>
-                  <th>상호명</th><th>사업자번호</th><th>전화번호</th>
-                  <th>주소</th><th>특이사항</th>
+                  <th>유형</th><th>이름/회사명</th><th>전화번호</th>
+                  <th>담당자</th><th>특이사항</th>
                   <th>등록자</th><th>등록일시</th><th>수정자</th><th>수정일시</th>
                 </tr>
               </thead>
@@ -1158,16 +1181,47 @@
                     <th>권한</th>
                     <th>가입일</th>
                     <th>권한 변경</th>
+                    <th>관리</th>
                   </tr>
                 </thead>
                 <tbody id="tbody-all">
-                  <tr><td colspan="5" class="empty">사용자가 없습니다.</td></tr>
+                  <tr><td colspan="6" class="empty">사용자가 없습니다.</td></tr>
                 </tbody>
               </table>
             </div>
           </div>
         </div>
 
+
+        <!-- 내 정보 -->
+        <div id="page-profile" class="page">
+          <div class="ib-header-card" style="max-width:480px">
+            <div style="font-weight:700;font-size:.95rem;margin-bottom:1rem">내 정보</div>
+            <dl class="detail-dl">
+              <div class="detail-row"><dt>이름</dt><dd id="profile-name">-</dd></div>
+              <div class="detail-row"><dt>아이디</dt><dd id="profile-username">-</dd></div>
+              <div class="detail-row"><dt>권한</dt><dd id="profile-role">-</dd></div>
+              <div class="detail-row"><dt>가입일</dt><dd id="profile-created">-</dd></div>
+            </dl>
+
+            <div style="margin-top:1.5rem;border-top:1px solid var(--gray-100);padding-top:1.25rem">
+              <div style="font-weight:700;font-size:.9rem;margin-bottom:.75rem">비밀번호 변경</div>
+              <div class="field" style="margin-bottom:.5rem">
+                <label class="label">현재 비밀번호</label>
+                <input type="password" id="profile-cur-pw" class="inp" placeholder="현재 비밀번호">
+              </div>
+              <div class="field" style="margin-bottom:.5rem">
+                <label class="label">새 비밀번호</label>
+                <input type="password" id="profile-new-pw" class="inp" placeholder="새 비밀번호 (4자 이상)">
+              </div>
+              <div class="field" style="margin-bottom:.75rem">
+                <label class="label">비밀번호 확인</label>
+                <input type="password" id="profile-confirm-pw" class="inp" placeholder="새 비밀번호 확인">
+              </div>
+              <button class="btn btn-primary" onclick="saveProfilePw()">변경하기</button>
+            </div>
+          </div>
+        </div>
 
         <!-- 회사 정보 -->
         <div id="page-company" class="page">
@@ -1308,6 +1362,32 @@
         <span id="vdd-star-label" class="v-star-label">중요 거래처</span>
       </div>
 
+      <!-- 매입거래처 전용: 유형별 정보 -->
+      <div id="vdd-purchase-section" class="hidden">
+        <div class="vdd-field">
+          <div class="vdd-label">거래처 유형</div>
+          <div class="vdd-value" id="vdd-vendor-type-label">-</div>
+        </div>
+        <!-- 일반소비자 -->
+        <div id="vdd-pind-section" class="hidden">
+          <div class="form-row-2">
+            <div class="vdd-field"><div class="vdd-label">이름</div><div class="vdd-value" id="vdd-ind-name">-</div></div>
+            <div class="vdd-field"><div class="vdd-label">전화번호</div><div class="vdd-value" id="vdd-ind-phone">-</div></div>
+          </div>
+          <div class="form-row-2">
+            <div class="vdd-field"><div class="vdd-label">계좌번호</div><div class="vdd-value" id="vdd-ind-account">-</div></div>
+            <div class="vdd-field"><div class="vdd-label">비고</div><div class="vdd-value" id="vdd-ind-notes">-</div></div>
+          </div>
+        </div>
+        <!-- 기업 -->
+        <div id="vdd-pcomp-section" class="hidden">
+          <div class="form-row-2">
+            <div class="vdd-field"><div class="vdd-label">담당자</div><div class="vdd-value" id="vdd-mgr-name">-</div></div>
+            <div class="vdd-field"><div class="vdd-label">담당자전화번호</div><div class="vdd-value" id="vdd-mgr-phone">-</div></div>
+          </div>
+        </div>
+      </div>
+
       <div class="form-row-2">
         <div class="vdd-field">
           <div class="vdd-label">이름</div>
@@ -1379,6 +1459,32 @@
     <div id="vdd-edit" class="modal-bd hidden">
       <form id="form-vendor-edit" autocomplete="off">
         <input type="hidden" id="vde-id" />
+        <input type="hidden" id="vde-vendor-type" value="company" />
+        <!-- 매입거래처 전용: 유형 선택 및 개별 필드 -->
+        <div id="vde-purchase-section" class="hidden">
+          <div class="pv-type-toggle" style="margin-bottom:.75rem">
+            <button type="button" class="pv-type-btn active" data-vtype-edit="company">기업</button>
+            <button type="button" class="pv-type-btn" data-vtype-edit="individual">일반소비자</button>
+          </div>
+          <!-- 일반소비자 편집 -->
+          <div id="vde-ind-section" class="hidden">
+            <div class="form-row-2">
+              <div class="field"><label>이름 <span class="req">*</span></label><input id="vde-ind-name" type="text" placeholder="이름" /></div>
+              <div class="field"><label>전화번호</label><input id="vde-ind-phone" type="text" placeholder="000-0000-0000" maxlength="13" /></div>
+            </div>
+            <div class="form-row-2">
+              <div class="field"><label>계좌번호</label><input id="vde-ind-account" type="text" placeholder="계좌번호" maxlength="20" /></div>
+              <div class="field"><label>비고</label><input id="vde-ind-notes" type="text" placeholder="비고" /></div>
+            </div>
+          </div>
+          <!-- 기업 추가 필드 -->
+          <div id="vde-comp-extra" class="hidden">
+            <div class="form-row-2">
+              <div class="field"><label>담당자</label><input id="vde-mgr-name" type="text" placeholder="담당자 이름" /></div>
+              <div class="field"><label>담당자전화번호</label><input id="vde-mgr-phone" type="text" placeholder="000-0000-0000" maxlength="13" /></div>
+            </div>
+          </div>
+        </div>
         <input type="hidden" id="vde-is-important" value="0" />
         <!-- 출고거래처 전용: 중요 표시 버튼 -->
         <div id="vde-star-row" class="hidden v-star-row">
@@ -1502,6 +1608,51 @@
     <div class="modal-bd">
       <form id="form-vendor" autocomplete="off">
         <input type="hidden" id="v-id" />
+        <input type="hidden" id="v-vendor-type" value="company" />
+
+        <!-- 매입거래처 전용: 유형 선택 -->
+        <div id="v-purchase-section" class="hidden">
+          <div class="pv-type-toggle" style="margin-bottom:.75rem">
+            <button type="button" class="pv-type-btn active" data-vtype="company">기업</button>
+            <button type="button" class="pv-type-btn" data-vtype="individual">일반소비자</button>
+          </div>
+        </div>
+        <!-- 일반소비자 전용 필드 -->
+        <div id="v-ind-section" class="hidden">
+          <div class="form-row-2">
+            <div class="field">
+              <label>이름 <span class="req">*</span></label>
+              <input id="v-ind-name" type="text" placeholder="이름" />
+            </div>
+            <div class="field">
+              <label>전화번호</label>
+              <input id="v-ind-phone" type="text" placeholder="000-0000-0000" maxlength="13" />
+            </div>
+          </div>
+          <div class="form-row-2">
+            <div class="field">
+              <label>계좌번호</label>
+              <input id="v-ind-account" type="text" placeholder="계좌번호" maxlength="20" />
+            </div>
+            <div class="field">
+              <label>비고</label>
+              <input id="v-ind-notes" type="text" placeholder="비고" />
+            </div>
+          </div>
+        </div>
+        <!-- 기업 추가 필드 (매입거래처용) -->
+        <div id="v-comp-extra" class="hidden">
+          <div class="form-row-2">
+            <div class="field">
+              <label>담당자</label>
+              <input id="v-mgr-name" type="text" placeholder="담당자 이름" />
+            </div>
+            <div class="field">
+              <label>담당자전화번호</label>
+              <input id="v-mgr-phone" type="text" placeholder="000-0000-0000" maxlength="13" />
+            </div>
+          </div>
+        </div>
         <div class="form-row-2">
           <div class="field">
             <label>상호명 <span class="req">*</span></label>
@@ -1584,6 +1735,30 @@
     <div class="modal-ft">
       <button class="btn btn-ghost" id="btn-vendor-cancel">취소</button>
       <button class="btn btn-primary" id="btn-vendor-save">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 관리자 비밀번호 강제 변경 모달 ═══════════════════════════ -->
+<div id="modal-admin-pw" class="modal-overlay hidden">
+  <div class="modal modal-sm">
+    <div class="modal-hd">
+      <h3 id="admin-pw-modal-title">비밀번호 변경</h3>
+      <button class="btn btn-ghost btn-xs" onclick="document.getElementById('modal-admin-pw').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-bd">
+      <div class="field" style="margin-bottom:.5rem">
+        <label class="label">새 비밀번호</label>
+        <input type="password" id="admin-pw-new" class="inp" placeholder="새 비밀번호 (4자 이상)">
+      </div>
+      <div class="field">
+        <label class="label">비밀번호 확인</label>
+        <input type="password" id="admin-pw-confirm" class="inp" placeholder="비밀번호 확인">
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn btn-ghost" onclick="document.getElementById('modal-admin-pw').classList.add('hidden')">취소</button>
+      <button class="btn btn-primary" onclick="submitAdminPw()">변경</button>
     </div>
   </div>
 </div>

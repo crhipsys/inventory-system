@@ -25,15 +25,15 @@ async function fetchReturnOrder(db, id) {
 }
 
 // ── 헬퍼: 재고 조회 ──────────────────────────────────────────────
-async function getInv(db, manufacturer, model_name, spec) {
+async function getInv(db, manufacturer, model_name, spec, conditionType = 'normal') {
   return (
     await db.getAsync(
-      `SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ? AND spec = ?`,
-      [manufacturer, model_name, spec || '']
+      `SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ? AND spec = ? AND condition_type = ?`,
+      [manufacturer, model_name, spec || '', conditionType]
     ) ||
     await db.getAsync(
-      `SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ?`,
-      [manufacturer, model_name]
+      `SELECT * FROM inventory WHERE manufacturer = ? AND model_name = ? AND condition_type = ?`,
+      [manufacturer, model_name, conditionType]
     )
   );
 }
@@ -144,7 +144,7 @@ router.post('/', auth('editor'), async (req, res) => {
        linked_outbound_id || null, reason || 'other', notes || null, n, req.user.id]
     );
 
-    // 반품 품목 삽입 + pending_test 증가
+    // 반품 품목 삽입
     for (const item of return_items) {
       if (!item.manufacturer || !item.model_name || !(Number(item.quantity) > 0)) continue;
       await db.runAsync(
@@ -155,13 +155,6 @@ router.post('/', auth('editor'), async (req, res) => {
          item.manufacturer, item.model_name, item.spec || '', Number(item.quantity),
          Number(item.sale_price) || 0, item.notes || null]
       );
-      const inv = await getInv(db, item.manufacturer, item.model_name, item.spec);
-      if (inv) {
-        await db.runAsync(
-          `UPDATE inventory SET pending_test = pending_test + ?, updated_at = ? WHERE id = ?`,
-          [Number(item.quantity), n, inv.id]
-        );
-      }
     }
 
     // 교환 출고 품목 삽입
@@ -204,17 +197,6 @@ router.put('/:id', auth('editor'), async (req, res) => {
 
     const n = nowStr();
 
-    // 기존 pending_test 원복
-    for (const item of old.return_items) {
-      const inv = await getInv(db, item.manufacturer, item.model_name, item.spec);
-      if (inv) {
-        await db.runAsync(
-          `UPDATE inventory SET pending_test = MAX(0, pending_test - ?), updated_at = ? WHERE id = ?`,
-          [item.quantity, n, inv.id]
-        );
-      }
-    }
-
     // 기존 품목 삭제
     await db.runAsync(`DELETE FROM return_items   WHERE return_order_id = ?`, [req.params.id]);
     await db.runAsync(`DELETE FROM exchange_items WHERE return_order_id = ?`, [req.params.id]);
@@ -248,13 +230,6 @@ router.put('/:id', auth('editor'), async (req, res) => {
          item.manufacturer, item.model_name, item.spec || '', Number(item.quantity),
          Number(item.sale_price) || 0, item.notes || null]
       );
-      const inv = await getInv(db, item.manufacturer, item.model_name, item.spec);
-      if (inv) {
-        await db.runAsync(
-          `UPDATE inventory SET pending_test = pending_test + ?, updated_at = ? WHERE id = ?`,
-          [Number(item.quantity), n, inv.id]
-        );
-      }
     }
 
     // 새 교환 출고 품목 삽입
@@ -312,35 +287,41 @@ router.patch('/:id/status', auth('editor'), async (req, res) => {
 
     // ── 재고 처리 ──────────────────────────────────────────────
     if (status === 'normal' && oldStatus !== 'normal') {
-      // 반품 정상확정: pending_test↓ current_stock↑ normal_returns↑
+      // 반품 정상확정: current_stock↑ normal_returns↑
       for (const item of order.return_items) {
         const inv = await getInv(db, item.manufacturer, item.model_name, item.spec);
         if (inv) {
           await db.runAsync(
             `UPDATE inventory
-             SET pending_test   = MAX(0, pending_test - ?),
-                 current_stock  = current_stock + ?,
-                 normal_stock   = normal_stock + ?,
+             SET current_stock  = current_stock + ?,
                  normal_returns = normal_returns + ?,
                  updated_at     = ?
              WHERE id = ?`,
-            [item.quantity, item.quantity, item.quantity, item.quantity, n, inv.id]
+            [item.quantity, item.quantity, n, inv.id]
           );
         }
       }
 
     } else if (status === 'defective' && oldStatus !== 'defective') {
-      // 불량확정: pending_test↓ defective_stock↑
+      // 불량확정: condition_type='defective' 행 current_stock↑ (없으면 생성)
       for (const item of order.return_items) {
-        const inv = await getInv(db, item.manufacturer, item.model_name, item.spec);
-        if (inv) {
+        const defInv = await getInv(db, item.manufacturer, item.model_name, item.spec, 'defective');
+        if (defInv) {
           await db.runAsync(
-            `UPDATE inventory
-             SET pending_test    = MAX(0, pending_test - ?),
-                 defective_stock = defective_stock + ?,
-                 updated_at      = ?
-             WHERE id = ?`,
-            [item.quantity, item.quantity, n, inv.id]
+            `UPDATE inventory SET current_stock = current_stock + ?, updated_at = ? WHERE id = ?`,
+            [item.quantity, n, defInv.id]
+          );
+        } else {
+          const normInv = await getInv(db, item.manufacturer, item.model_name, item.spec, 'normal');
+          const specVal = (item.spec || '').toLowerCase().trim();
+          await db.runAsync(
+            `INSERT INTO inventory
+               (id, category, product_type, spec, manufacturer, model_name, condition_type,
+                current_stock, avg_purchase_price, total_inbound, total_outbound,
+                normal_returns, has_temp_purchase, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'defective', ?, 0, 0, 0, 0, 0, ?)`,
+            [uuidv4(), normInv?.category || null, normInv?.product_type || 'general', specVal,
+             item.manufacturer, item.model_name, item.quantity, n]
           );
         }
       }
@@ -352,13 +333,11 @@ router.patch('/:id/status', auth('editor'), async (req, res) => {
         if (inv) {
           await db.runAsync(
             `UPDATE inventory
-             SET pending_test   = MAX(0, pending_test - ?),
-                 current_stock  = current_stock + ?,
-                 normal_stock   = normal_stock + ?,
+             SET current_stock  = current_stock + ?,
                  normal_returns = normal_returns + ?,
                  updated_at     = ?
              WHERE id = ?`,
-            [item.quantity, item.quantity, item.quantity, item.quantity, n, inv.id]
+            [item.quantity, item.quantity, n, inv.id]
           );
         }
       }
@@ -409,11 +388,10 @@ router.patch('/:id/status', auth('editor'), async (req, res) => {
           await db.runAsync(
             `UPDATE inventory
              SET current_stock   = current_stock - ?,
-                 normal_stock    = normal_stock - ?,
                  total_outbound  = total_outbound + ?,
                  updated_at      = ?
              WHERE id = ?`,
-            [qty, qty, qty, n, inv.id]
+            [qty, qty, n, inv.id]
           );
         }
 
@@ -450,19 +428,6 @@ router.delete('/:id', auth('editor'), async (req, res) => {
       return res.status(400).json({ error: '접수대기 상태에서만 삭제할 수 있습니다.' });
 
     const n = nowStr();
-
-    // pending/testing 상태면 pending_test 원복
-    if (['pending', 'testing'].includes(order.status)) {
-      for (const item of order.return_items) {
-        const inv = await getInv(db, item.manufacturer, item.model_name, item.spec);
-        if (inv) {
-          await db.runAsync(
-            `UPDATE inventory SET pending_test = MAX(0, pending_test - ?), updated_at = ? WHERE id = ?`,
-            [item.quantity, n, inv.id]
-          );
-        }
-      }
-    }
 
     // 교환완료로 생성된 출고 주문도 함께 삭제
     if (order.status === 'exchange_done') {

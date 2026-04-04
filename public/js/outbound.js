@@ -27,6 +27,10 @@ function obShowSubpage(name) {
   );
   // 모델 드롭다운 닫기
   document.getElementById('ob-model-dropdown')?.classList.add('hidden');
+  // 상세가 아닐 때 스티키 푸터 숨김
+  if (name !== 'detail') {
+    document.getElementById('ob-sticky-footer')?.classList.add('hidden');
+  }
 }
 
 // ── 금액 포맷 헬퍼 ────────────────────────────
@@ -96,8 +100,8 @@ function obRenderCards(list) {
     return `
       <div class="ib-card ob-card${r.payment_status === 'unpaid' ? ' ob-card-unpaid' : ''}" onclick="obOpenDetail('${r.id}')">
         <div class="ob-card-hd">
-          <span class="ib-card-date">${r.order_date}</span>
           <span class="ib-card-vendor">${escHtml(r.vendor_name || '거래처 없음')}</span>
+          <span class="ib-card-date">${r.order_date}</span>
           <div style="flex:1"></div>
           <span class="ob-card-total">${obFmtMoney(r.total_price)}</span>
         </div>
@@ -140,12 +144,15 @@ window.obOpenDetail = async function(id) {
   try {
     const order = await API.get(`/outbound/${id}`);
     _obCurrentOrder = order;
-    obRenderDetail(order);
+    const vendorInfo = order.sales_vendor_id
+      ? await API.get(`/sales-vendors/${order.sales_vendor_id}`).catch(() => null)
+      : null;
+    obRenderDetail(order, vendorInfo);
     obShowSubpage('detail');
   } catch (err) { toast(err.message, 'error'); }
 };
 
-function obRenderDetail(order) {
+function obRenderDetail(order, vendorInfo) {
   const taxLabel = order.tax_type === '10' ? '10%' : '없음';
   const supplyTotal = (order.items || []).reduce((s, it) => s + it.quantity * it.sale_price, 0);
   const taxTotal    = (order.items || []).reduce((s, it) => s + (it.tax_amount || 0), 0);
@@ -153,6 +160,9 @@ function obRenderDetail(order) {
 
   const rows = (order.items || []).map((it, i) => {
     const profitCls = (it.total_profit || 0) >= 0 ? 'ob-profit-pos' : 'ob-profit-neg';
+    const ct = it.condition_type || 'normal';
+    const ctLabel = ct === 'defective' ? '불량' : ct === 'disposal' ? '폐기' : '정상';
+    const ctCls   = ct === 'defective' ? 'ob-cond-defective' : ct === 'disposal' ? 'ob-cond-disposal' : 'ob-cond-normal';
     return `
       <tr>
         <td style="text-align:center">${i + 1}</td>
@@ -160,6 +170,7 @@ function obRenderDetail(order) {
         <td>${escHtml(it.manufacturer)}</td>
         <td>${escHtml(it.model_name)}</td>
         <td>${escHtml(it.spec || '-')}</td>
+        <td><span class="ob-cond-badge ${ctCls}">${ctLabel}</span></td>
         <td style="text-align:right">${it.quantity}</td>
         <td style="text-align:right">${obFmtMoney(it.sale_price)}</td>
         <td style="text-align:right">${obFmtMoney(it.tax_amount)}</td>
@@ -170,18 +181,30 @@ function obRenderDetail(order) {
     `;
   }).join('');
 
+  // 거래처 상세 정보 행
+  let vendorRows = '';
+  if (vendorInfo) {
+    vendorRows += `<div class="ob-dd-pair"><dt>상호명</dt><dd>${escHtml(vendorInfo.company_name || vendorInfo.vendor_name || '-')}</dd></div>`;
+    const _vAddr = vendorInfo.registered_address || vendorInfo.address || '';
+    if (_vAddr) vendorRows += `<div class="ob-dd-pair"><dt>사업장주소</dt><dd>${escHtml(_vAddr)}</dd></div>`;
+    if (vendorInfo.phone) vendorRows += `<div class="ob-dd-pair"><dt>전화번호</dt><dd>${escHtml(vendorInfo.phone)}</dd></div>`;
+  } else if (order.vendor_name) {
+    vendorRows = `<div class="ob-dd-pair"><dt>상호명</dt><dd>${escHtml(order.vendor_name)}</dd></div>`;
+  }
+
   const html = `
     <div class="ib-header-card">
       <dl class="ob-detail-dl">
         <div class="ob-dd-pair"><dt>출고일</dt><dd>${order.order_date}</dd></div>
-        <div class="ob-dd-pair"><dt>거래처</dt><dd>${escHtml(order.vendor_name || '-')}</dd></div>
+        ${vendorRows}
         <div class="ob-dd-pair"><dt>부가세</dt><dd>${taxLabel}</dd></div>
         <div class="ob-dd-pair"><dt>비고</dt><dd>${escHtml(order.notes || '-')}</dd></div>
       </dl>
       <div class="vdd-meta" style="margin-top:.75rem">
         <span><span class="meta-label">등록자</span>${escHtml(order.created_by_name || '-')}</span>
         <span><span class="meta-label">등록일시</span>${fmtDateTime(order.created_at)}</span>
-        ${order.updated_at ? `<span><span class="meta-label">수정일시</span>${fmtDateTime(order.updated_at)}</span>` : ''}
+        <span><span class="meta-label">수정자</span>${escHtml(order.updated_by_name || '-')}</span>
+        <span><span class="meta-label">수정일시</span>${order.updated_at ? fmtDateTime(order.updated_at) : '-'}</span>
       </div>
     </div>
 
@@ -190,23 +213,23 @@ function obRenderDetail(order) {
         <thead>
           <tr>
             <th>#</th><th>구분</th><th>브랜드</th><th>모델명</th><th>스펙</th>
-            <th>수량</th><th>판매가</th><th>세금</th><th>합계</th><th>이익</th><th>비고</th>
+            <th>상태</th><th>수량</th><th>판매가</th><th>세금</th><th>합계</th><th>이익</th><th>비고</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
         <tfoot>
           <tr>
-            <td colspan="8" style="text-align:right;font-weight:600">공급가액</td>
+            <td colspan="9" style="text-align:right;font-weight:600">공급가액</td>
             <td style="text-align:right;font-weight:600">${obFmtMoney(supplyTotal)}</td>
             <td colspan="2"></td>
           </tr>
           <tr>
-            <td colspan="8" style="text-align:right">세액 (${taxLabel})</td>
+            <td colspan="9" style="text-align:right">세액 (${taxLabel})</td>
             <td style="text-align:right">${obFmtMoney(taxTotal)}</td>
             <td colspan="2"></td>
           </tr>
           <tr>
-            <td colspan="8" style="text-align:right;font-weight:800">합계금액</td>
+            <td colspan="9" style="text-align:right;font-weight:800">합계금액</td>
             <td style="text-align:right;font-weight:800">${obFmtMoney(grandTotal)}</td>
             <td colspan="2"></td>
           </tr>
@@ -216,6 +239,15 @@ function obRenderDetail(order) {
   `;
 
   document.getElementById('ob-detail-content').innerHTML = html;
+
+  // 스티키 푸터 업데이트
+  const footer = document.getElementById('ob-sticky-footer');
+  if (footer) {
+    document.getElementById('ob-sf-supply').textContent = obFmtMoney(supplyTotal);
+    document.getElementById('ob-sf-tax').textContent    = obFmtMoney(taxTotal);
+    document.getElementById('ob-sf-grand').textContent  = obFmtMoney(grandTotal);
+    footer.classList.remove('hidden');
+  }
 
   // 버튼 권한
   const isAdmin = currentUser?.role === 'admin';
@@ -244,7 +276,10 @@ async function obTogglePaymentStatus(id, newStatus) {
     // 목록 캐시 업데이트
     const idx = _obOrders.findIndex(o => o.id === id);
     if (idx >= 0) _obOrders[idx] = { ..._obOrders[idx], payment_status: newStatus };
-    obRenderDetail(updated);
+    const vendorInfo = updated.sales_vendor_id
+      ? await API.get(`/sales-vendors/${updated.sales_vendor_id}`).catch(() => null)
+      : null;
+    obRenderDetail(updated, vendorInfo);
     toast(`"${label}"으로 변경되었습니다.`, 'success');
   } catch (err) { toast(err.message, 'error'); }
 }
@@ -258,10 +293,8 @@ async function obShowForm(id = null) {
   _obRowCount  = 0;
   document.getElementById('ob-form-title').textContent = id ? '출고 수정' : '출고 등록';
 
-  // 재고 로드
-  if (!_obInventory.length) {
-    try { _obInventory = await API.get('/inventory'); } catch { /* 무시 */ }
-  }
+  // 재고 로드 (condition_type별 분리 목록)
+  try { _obInventory = await API.get('/outbound/inventory-search'); } catch { /* 무시 */ }
 
   // Flatpickr 초기화
   if (!_obFlatpickr) {
@@ -336,6 +369,10 @@ function obAddRow() {
         onblur="setTimeout(()=>document.getElementById('ob-model-dropdown')?.classList.add('hidden'),200)" />
     </td>
     <td><input class="ob-inp ob-inp-spec" type="text" placeholder="스펙" /></td>
+    <td class="ob-cell-cond">
+      <input type="hidden" class="ob-inp-condition" value="normal" />
+      <span class="ob-cond-badge ob-cond-normal">정상</span>
+    </td>
     <td><input class="ob-inp ob-inp-qty" type="number" min="1" placeholder="0"
       oninput="obCalcRow(${idx})" style="width:60px" /></td>
     <td><input class="ob-inp ob-inp-price" type="number" min="0" placeholder="0"
@@ -362,6 +399,14 @@ function obFillRow(idx, it) {
   row.querySelector('.ob-inp-qty').value      = it.quantity || '';
   row.querySelector('.ob-inp-price').value    = it.sale_price || '';
   row.querySelector('.ob-inp-notes').value    = it.notes || '';
+  // condition_type 반영
+  const ct = it.condition_type || 'normal';
+  const ctLabel = ct === 'defective' ? '불량' : ct === 'disposal' ? '폐기' : '정상';
+  const ctCls   = ct === 'defective' ? 'ob-cond-defective' : ct === 'disposal' ? 'ob-cond-disposal' : 'ob-cond-normal';
+  const hiddenInp = row.querySelector('.ob-inp-condition');
+  const badgeSpan = row.querySelector('.ob-cond-badge');
+  if (hiddenInp) hiddenInp.value = ct;
+  if (badgeSpan) { badgeSpan.className = `ob-cond-badge ${ctCls}`; badgeSpan.textContent = ctLabel; }
   obCalcRow(idx);
 }
 
@@ -579,28 +624,33 @@ window.obShowModelDropdown = function(inputEl, rowIdx) {
 
   let rows = '';
   if (!limited.length) {
-    rows = `<tr><td colspan="5" class="empty" style="padding:.5rem">검색 결과 없음</td></tr>`;
+    rows = `<tr><td colspan="6" class="empty" style="padding:.5rem">검색 결과 없음</td></tr>`;
   } else {
     rows = limited.map((inv, i) => {
-      const noStock = inv.current_stock <= 0;
-      const warn    = inv.pending_test > 0 ? ' ⚠' : '';
-      return `<tr class="ob-model-row${noStock ? ' ob-row-nostock' : ''}"
-        ${noStock ? '' : `onmousedown="obSelectModelByIdx(${i})"`}>
+      const noStock  = inv.current_stock <= 0;
+      const isDisp   = inv.condition_type === 'disposal';
+      const disabled = noStock || isDisp;
+      const ct = inv.condition_type || 'normal';
+      const ctLabel = ct === 'defective' ? '불량' : ct === 'disposal' ? '폐기' : '정상';
+      const ctCls   = ct === 'defective' ? 'ob-cond-defective' : ct === 'disposal' ? 'ob-cond-disposal' : 'ob-cond-normal';
+      return `<tr class="ob-model-row${disabled ? ' ob-row-nostock' : ''}"
+        ${disabled ? '' : `onmousedown="obSelectModelByIdx(${i})"`}>
         <td>${escHtml(inv.category || '-')}</td>
         <td>${escHtml(inv.manufacturer || '-')}</td>
         <td>${escHtml(inv.model_name)}</td>
         <td>${escHtml(inv.spec || '-')}</td>
-        <td class="${noStock ? 'ob-stock-zero' : ''}">${inv.current_stock}개${warn}</td>
+        <td><span class="ob-cond-badge ${ctCls}">${ctLabel}</span></td>
+        <td class="${(noStock || isDisp) ? 'ob-stock-zero' : ''}">${inv.current_stock}개${isDisp ? ' (출고불가)' : ''}</td>
       </tr>`;
     }).join('');
   }
 
   // 안내 + 더보기 표시
   const hintRow = hint
-    ? `<tr><td colspan="5" style="padding:.35rem .6rem;font-size:.8rem;color:var(--gray-500);background:#fafafa">${hint}</td></tr>`
+    ? `<tr><td colspan="6" style="padding:.35rem .6rem;font-size:.8rem;color:var(--gray-500);background:#fafafa">${hint}</td></tr>`
     : '';
   const moreRow = matches.length > 20
-    ? `<tr><td colspan="5" style="padding:.35rem .6rem;font-size:.8rem;color:var(--gray-500);background:#fafafa">... 외 ${matches.length - 20}개 (검색어 또는 구분/브랜드를 좁혀보세요)</td></tr>`
+    ? `<tr><td colspan="6" style="padding:.35rem .6rem;font-size:.8rem;color:var(--gray-500);background:#fafafa">... 외 ${matches.length - 20}개 (검색어 또는 구분/브랜드를 좁혀보세요)</td></tr>`
     : '';
 
   tbody.innerHTML = hintRow + rows + moreRow;
@@ -612,11 +662,19 @@ window.obSelectModelByIdx = function(i) {
   if (!inv) return;
   const row = document.getElementById(`ob-row-${_obDropdownRow}`);
   if (!row) return;
-  row.querySelector('.ob-inp-category').value = inv.category || '';
-  row.querySelector('.ob-inp-mfr').value      = inv.manufacturer;
-  row.querySelector('.ob-inp-model').value    = inv.model_name;
-  row.querySelector('.ob-inp-spec').value     = inv.spec || '';
+  row.querySelector('.ob-inp-category').value  = inv.category || '';
+  row.querySelector('.ob-inp-mfr').value       = inv.manufacturer;
+  row.querySelector('.ob-inp-model').value     = inv.model_name;
+  row.querySelector('.ob-inp-spec').value      = inv.spec || '';
   row.dataset.maxStock = inv.current_stock;
+  // condition_type 반영
+  const ct = inv.condition_type || 'normal';
+  const ctLabel = ct === 'defective' ? '불량' : ct === 'disposal' ? '폐기' : '정상';
+  const ctCls   = ct === 'defective' ? 'ob-cond-defective' : ct === 'disposal' ? 'ob-cond-disposal' : 'ob-cond-normal';
+  const hiddenInp = row.querySelector('.ob-inp-condition');
+  const badgeSpan = row.querySelector('.ob-cond-badge');
+  if (hiddenInp) hiddenInp.value = ct;
+  if (badgeSpan) { badgeSpan.className = `ob-cond-badge ${ctCls}`; badgeSpan.textContent = ctLabel; }
   obCalcRow(_obDropdownRow);
   document.getElementById('ob-model-dropdown')?.classList.add('hidden');
 };
@@ -648,13 +706,14 @@ async function obSave() {
       toast('각 항목의 브랜드, 모델명, 수량(1 이상)을 입력하세요.', 'error'); return;
     }
     items.push({
-      category:     row.querySelector('.ob-inp-category')?.value?.trim() || null,
-      manufacturer: mfr,
-      model_name:   model,
-      spec:         row.querySelector('.ob-inp-spec')?.value?.trim()    || '',
-      quantity:     qty,
-      sale_price:   Number(row.querySelector('.ob-inp-price')?.value)   || 0,
-      notes:        row.querySelector('.ob-inp-notes')?.value?.trim()   || null,
+      category:       row.querySelector('.ob-inp-category')?.value?.trim()  || null,
+      manufacturer:   mfr,
+      model_name:     model,
+      spec:           row.querySelector('.ob-inp-spec')?.value?.trim()      || '',
+      condition_type: row.querySelector('.ob-inp-condition')?.value         || 'normal',
+      quantity:       qty,
+      sale_price:     Number(row.querySelector('.ob-inp-price')?.value)     || 0,
+      notes:          row.querySelector('.ob-inp-notes')?.value?.trim()     || null,
     });
   }
   if (!items.length) { toast('출고 항목을 1개 이상 입력하세요.', 'error'); return; }
@@ -711,7 +770,7 @@ async function obDelete() {
 //  거래명세서
 // ══════════════════════════════════════════════
 
-function obStatementHtml(order, company) {
+function obStatementHtml(order, company, vendorInfo) {
   const taxLabel    = order.tax_type === '10' ? '10%' : '없음';
   const supplyTotal = (order.items || []).reduce((s, it) => s + it.quantity * it.sale_price, 0);
   const taxTotal    = (order.items || []).reduce((s, it) => s + (it.tax_amount || 0), 0);
@@ -749,10 +808,10 @@ function obStatementHtml(order, company) {
       <div class="stmt-party">
         <div class="stmt-party-title">공급받는자</div>
         <table class="stmt-party-tbl">
-          <tr><td>상호</td><td>${escHtml(order.vendor_name || '')}</td></tr>
-          <tr><td>사업자번호</td><td></td></tr>
-          <tr><td>주소</td><td></td></tr>
-          <tr><td>담당자</td><td></td></tr>
+          <tr><td>상호</td><td>${escHtml(vendorInfo?.company_name || vendorInfo?.vendor_name || order.vendor_name || '')}</td></tr>
+          ${vendorInfo?.business_number ? `<tr><td>사업자번호</td><td>${fmtBizNum(vendorInfo.business_number)}</td></tr>` : ''}
+          ${(vendorInfo?.registered_address || vendorInfo?.address) ? `<tr><td>주소</td><td>${escHtml(vendorInfo.registered_address || vendorInfo.address)}</td></tr>` : ''}
+          ${vendorInfo?.phone ? `<tr><td>전화번호</td><td>${fmtPhone(vendorInfo.phone)}</td></tr>` : ''}
         </table>
       </div>
     </div>
@@ -780,7 +839,10 @@ function obStatementHtml(order, company) {
 }
 
 async function obShowStatement(order) {
-  const company = await API.get('/company').catch(() => null);
+  const [company, vendorInfo] = await Promise.all([
+    API.get('/company').catch(() => null),
+    order.sales_vendor_id ? API.get(`/sales-vendors/${order.sales_vendor_id}`).catch(() => null) : Promise.resolve(null),
+  ]);
   if (!company || !company.company_name) {
     toast('회사 정보를 먼저 등록해주세요.', 'error');
     const go = confirm('회사 정보 페이지로 이동하시겠습니까?');
@@ -788,15 +850,18 @@ async function obShowStatement(order) {
     return;
   }
   const content = document.getElementById('ob-statement-content');
-  if (content) content.innerHTML = obStatementHtml(order, company);
+  if (content) content.innerHTML = obStatementHtml(order, company, vendorInfo);
   document.getElementById('modal-ob-statement')?.classList.remove('hidden');
 }
 
 window.obPrintStatement = async function() {
   const order = _obCurrentOrder;
   if (!order) return;
-  const company = await API.get('/company').catch(() => null);
-  const html = obStatementHtml(order, company);
+  const [company, vendorInfo] = await Promise.all([
+    API.get('/company').catch(() => null),
+    order.sales_vendor_id ? API.get(`/sales-vendors/${order.sales_vendor_id}`).catch(() => null) : Promise.resolve(null),
+  ]);
+  const html = obStatementHtml(order, company, vendorInfo);
   const win = window.open('', '_blank', 'width=820,height=700');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>거래명세서</title>
   <style>

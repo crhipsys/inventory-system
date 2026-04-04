@@ -21,6 +21,7 @@ router.get('/items', auth('editor'), async (req, res) => {
       `SELECT
          oi.id, oi.order_id,
          oi.category, oi.manufacturer, oi.model_name, oi.spec,
+         oi.condition_type,
          oi.quantity,
          oi.sale_price, oi.tax_amount, oi.total_price,
          oi.avg_purchase_price, oi.profit_per_unit, oi.total_profit,
