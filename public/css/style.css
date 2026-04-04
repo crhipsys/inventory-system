@@ -1294,6 +1294,20 @@ textarea.form-control { resize: vertical; min-height: 70px; }
   background: var(--gray-800); color: white; border-color: var(--gray-800);
 }
 
+/* ── 필터 상태 표시 바 ── */
+.inv-filter-status {
+  display: flex; align-items: center; gap: .6rem;
+  background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px;
+  padding: 5px 12px; margin: .3rem 0; font-size: .78rem; color: #1d4ed8;
+}
+.inv-filter-status.hidden { display: none; }
+.inv-filter-reset-btn {
+  font-size: .72rem; padding: 2px 10px; border-radius: 99px;
+  border: 1px solid #93c5fd; background: white; color: #1d4ed8;
+  cursor: pointer; font-weight: 600; transition: all .15s;
+}
+.inv-filter-reset-btn:hover { background: #1d4ed8; color: white; }
+
 /* ── 구분/브랜드 태그 (레거시 호환) ── */
 .inv-cat-tag {
   display: inline-block;

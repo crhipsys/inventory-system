@@ -89,15 +89,11 @@ function invApplyFilter() {
   const qModel  = model.toLowerCase().trim();
   const qVendor = vendor.toLowerCase().trim();
 
-  let list = _invAll.filter(r => {
+  let list = invGetTabFiltered().filter(r => {
     if (qCat    && !(r.category    || '').toLowerCase().includes(qCat))    return false;
     if (qBrand  && !(r.manufacturer|| '').toLowerCase().includes(qBrand))  return false;
     if (qModel  && !(r.model_name  || '').toLowerCase().includes(qModel))  return false;
     if (qVendor && !(r.last_vendor || r.last_vendor_name || '').toLowerCase().includes(qVendor)) return false;
-    if (_invActiveTab === 'normal')      return r.condition_type === 'normal' && (r.current_stock || 0) > 0;
-    if (_invActiveTab === 'defective')   return r.condition_type === 'defective';
-    if (_invActiveTab === 'disposal')    return r.condition_type === 'disposal';
-    if (_invActiveTab === 'smartstore')  return (r.has_smartstore || 0) > 0;
     return true;
   });
 
@@ -134,22 +130,54 @@ function invApplyFilter() {
 
   // 구분 필터 카운트
   invUpdateCatCounts();
+  invUpdateFilterStatus();
 
   invRenderTable(list);
 }
 
+function invGetTabFiltered() {
+  return _invAll.filter(r => {
+    if (_invActiveTab === 'normal')     return r.condition_type === 'normal' && (r.current_stock || 0) > 0;
+    if (_invActiveTab === 'defective')  return r.condition_type === 'defective';
+    if (_invActiveTab === 'disposal')   return r.condition_type === 'disposal';
+    if (_invActiveTab === 'smartstore') return (r.has_smartstore || 0) > 0;
+    return true;
+  });
+}
+
 function invUpdateCatCounts() {
-  const idMap = { 'M.2': 'M2' };
-  const keys  = ['all', ...INV_CAT_ORDER, '기타'];
+  const idMap      = { 'M.2': 'M2' };
+  const tabFiltered = invGetTabFiltered();
+  const keys       = ['all', ...INV_CAT_ORDER, '기타'];
   keys.forEach(cat => {
     let cnt;
-    if (cat === 'all')  cnt = _invAll.length;
-    else if (cat === '기타') cnt = _invAll.filter(r => !INV_CAT_ORDER.includes(r.category || '')).length;
-    else cnt = _invAll.filter(r => (r.category || '') === cat).length;
-    const elId = 'icf-' + (idMap[cat] || cat);
-    const el = document.getElementById(elId);
+    if (cat === 'all')       cnt = tabFiltered.length;
+    else if (cat === '기타') cnt = tabFiltered.filter(r => !INV_CAT_ORDER.includes(r.category || '')).length;
+    else                     cnt = tabFiltered.filter(r => (r.category || '') === cat).length;
+    const el = document.getElementById('icf-' + (idMap[cat] || cat));
     if (el) el.textContent = cnt;
   });
+}
+
+function invUpdateFilterStatus() {
+  const statusEl = document.getElementById('inv-filter-status');
+  const textEl   = document.getElementById('inv-filter-status-text');
+  if (!statusEl || !textEl) return;
+
+  const tabLabel = { all: '전체', normal: '정상재고', defective: '불량재고', disposal: '폐기재고', smartstore: '스마트스토어' };
+  const hasTabFilter = _invActiveTab !== 'all';
+  const hasCatFilter = _invCatFilter !== 'all';
+
+  if (!hasTabFilter && !hasCatFilter) {
+    statusEl.classList.add('hidden');
+    return;
+  }
+
+  let parts = [];
+  if (hasTabFilter) parts.push(tabLabel[_invActiveTab] || _invActiveTab);
+  if (hasCatFilter) parts.push(_invCatFilter);
+  textEl.textContent = parts.join(' > ') + ' 필터 적용 중';
+  statusEl.classList.remove('hidden');
 }
 
 // ── 테이블 렌더 ──────────────────────────────────────────────────
@@ -568,6 +596,19 @@ document.addEventListener('DOMContentLoaded', () => {
       );
       invApplyFilter();
     });
+  });
+
+  // 필터 초기화
+  document.getElementById('btn-inv-filter-reset')?.addEventListener('click', () => {
+    _invActiveTab = 'all';
+    _invCatFilter = 'all';
+    document.querySelectorAll('[data-invtab]').forEach(b =>
+      b.classList.toggle('active', b.dataset.invtab === 'all')
+    );
+    document.querySelectorAll('.inv-cat-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.catfilter === 'all')
+    );
+    invApplyFilter();
   });
 
   // 재고조정 버튼
