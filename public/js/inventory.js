@@ -17,17 +17,28 @@ let _adjFp         = null; // 조정일자 flatpickr
 const IB_STATUS_LABEL = { pending:'매입미완료', completed:'매입완료', priority:'우선등록' };
 
 // ── 구분 순서 / 색상 ─────────────────────────────────────────────
-const INV_CAT_ORDER  = ['CPU', 'RAM', 'VGA', 'SSD', 'NVMe', 'M.2', 'HDD', 'MB'];
+const INV_CAT_ORDER  = ['CPU', 'RAM', 'VGA', 'SSD', 'NVMe', 'M.2', 'HDD', 'MB', '노트북'];
 const INV_CAT_COLORS = {
-  'CPU':  { bg: '#e0f6ff', color: '#0369a1' },
-  'RAM':  { bg: '#d1fae5', color: '#047857' },
-  'VGA':  { bg: '#ffedd5', color: '#c2410c' },
-  'SSD':  { bg: '#dbeafe', color: '#1d4ed8' },
-  'NVMe': { bg: '#ede9fe', color: '#6d28d9' },
-  'M.2':  { bg: '#fce7f3', color: '#be185d' },
-  'HDD':  { bg: '#fef9c3', color: '#92400e' },
-  'MB':   { bg: '#fee2e2', color: '#dc2626' },
+  'CPU':   { bg: '#e0f6ff', color: '#0369a1' },
+  'RAM':   { bg: '#d1fae5', color: '#047857' },
+  'VGA':   { bg: '#ffedd5', color: '#c2410c' },
+  'SSD':   { bg: '#dbeafe', color: '#1d4ed8' },
+  'NVMe':  { bg: '#ede9fe', color: '#6d28d9' },
+  'M.2':   { bg: '#fce7f3', color: '#be185d' },
+  'HDD':   { bg: '#fef9c3', color: '#92400e' },
+  'MB':    { bg: '#fee2e2', color: '#dc2626' },
+  '노트북': { bg: '#ecfdf5', color: '#047857' },
 };
+
+// 구분값 대소문자 정규화 (ram→RAM, nvme→NVMe 등)
+const INV_CAT_NORMALIZE = {
+  'cpu': 'CPU', 'ram': 'RAM', 'vga': 'VGA',
+  'ssd': 'SSD', 'nvme': 'NVMe', 'm.2': 'M.2',
+  'hdd': 'HDD', 'mb': 'MB', '노트북': '노트북',
+};
+function invNormCat(cat) {
+  return INV_CAT_NORMALIZE[(cat || '').toLowerCase()] || (cat || '');
+}
 
 // ── 금액 포맷 ────────────────────────────────────────────────────
 function invFmt(v) {
@@ -42,7 +53,7 @@ function invNum(v) {
 }
 
 function invCatBadge(cat) {
-  const c   = cat || '';
+  const c   = invNormCat(cat || '');
   const col = INV_CAT_COLORS[c];
   const style = col
     ? `background:${col.bg};color:${col.color}`
@@ -100,15 +111,16 @@ function invApplyFilter() {
   // 구분 필터
   if (_invCatFilter !== 'all') {
     list = list.filter(r => {
-      if (_invCatFilter === '기타') return !INV_CAT_ORDER.includes(r.category || '');
-      return (r.category || '') === _invCatFilter;
+      const norm = invNormCat(r.category);
+      if (_invCatFilter === '기타') return !INV_CAT_ORDER.includes(norm);
+      return norm === _invCatFilter;
     });
   }
 
   // 정렬: 구분순 → 브랜드 가나다 → 모델명 가나다
   list.sort((a, b) => {
-    const ai = INV_CAT_ORDER.indexOf(a.category || '');
-    const bi = INV_CAT_ORDER.indexOf(b.category || '');
+    const ai = INV_CAT_ORDER.indexOf(invNormCat(a.category || ''));
+    const bi = INV_CAT_ORDER.indexOf(invNormCat(b.category || ''));
     const ak = ai === -1 ? INV_CAT_ORDER.length : ai;
     const bk = bi === -1 ? INV_CAT_ORDER.length : bi;
     if (ak !== bk) return ak - bk;
@@ -146,14 +158,14 @@ function invGetTabFiltered() {
 }
 
 function invUpdateCatCounts() {
-  const idMap      = { 'M.2': 'M2' };
+  const idMap       = { 'M.2': 'M2', '노트북': '노트북' };
   const tabFiltered = invGetTabFiltered();
-  const keys       = ['all', ...INV_CAT_ORDER, '기타'];
+  const keys        = ['all', ...INV_CAT_ORDER, '기타'];
   keys.forEach(cat => {
     let cnt;
     if (cat === 'all')       cnt = tabFiltered.length;
-    else if (cat === '기타') cnt = tabFiltered.filter(r => !INV_CAT_ORDER.includes(r.category || '')).length;
-    else                     cnt = tabFiltered.filter(r => (r.category || '') === cat).length;
+    else if (cat === '기타') cnt = tabFiltered.filter(r => !INV_CAT_ORDER.includes(invNormCat(r.category))).length;
+    else                     cnt = tabFiltered.filter(r => invNormCat(r.category) === cat).length;
     const el = document.getElementById('icf-' + (idMap[cat] || cat));
     if (el) el.textContent = cnt;
   });
