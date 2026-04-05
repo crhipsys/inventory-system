@@ -6,6 +6,7 @@
 let _invAll        = [];   // 전체 재고 데이터
 let _invFiltered   = [];   // 필터 후 목록
 let _invActiveTab  = 'all';
+let _invGroups     = [];   // 상품 그룹 목록
 let _invCatFilter  = 'all'; // 구분 필터
 let _invSearch     = { cat: '', brand: '', model: '', vendor: '' };
 let _invDetailId   = null; // 현재 상세 팝업 대상 inventory.id
@@ -66,11 +67,13 @@ function invCatBadge(cat) {
 // ══════════════════════════════════════════════
 async function loadInventory() {
   try {
-    const [list, summary] = await Promise.all([
+    const [list, summary, groups] = await Promise.all([
       API.get('/inventory'),
       API.get('/inventory/summary'),
+      API.get('/product-groups').catch(() => []),
     ]);
-    _invAll = Array.isArray(list) ? list : [];
+    _invAll    = Array.isArray(list)   ? list   : [];
+    _invGroups = Array.isArray(groups) ? groups : [];
     invRenderSummary(summary);
     invApplyFilter();
   } catch (err) { toast(err.message, 'error'); }
@@ -131,6 +134,39 @@ function invApplyFilter() {
 
   _invFiltered = list;
 
+  // 그룹 검색 결과 계산 (모델명 검색어가 있을 때만)
+  const qModel2 = _invSearch.model.toLowerCase().trim();
+  const groupRows = qModel2 ? _invGroups.filter(g =>
+    g.group_name.toLowerCase().includes(qModel2)
+  ).map(g => {
+    // 그룹에 속한 _invAll 항목들로 재고 합산
+    const members = _invAll.filter(r =>
+      (g.items || []).some(i =>
+        i.manufacturer === r.manufacturer &&
+        i.model_name   === r.model_name   &&
+        (i.spec || '') === (r.spec || '')
+      )
+    );
+    let normalStock = 0, defectiveStock = 0, disposalStock = 0;
+    members.forEach(r => {
+      if (r.condition_type === 'normal')    normalStock    += r.current_stock || 0;
+      if (r.condition_type === 'defective') defectiveStock += r.current_stock || 0;
+      if (r.condition_type === 'disposal')  disposalStock  += r.current_stock || 0;
+    });
+    return {
+      _isGroup:        true,
+      id:              g.id,
+      group_name:      g.group_name,
+      category:        g.category || '',
+      manufacturer:    g.brand    || '',
+      normal_stock:    normalStock,
+      defective_stock: defectiveStock,
+      disposal_stock:  disposalStock,
+      total_stock:     normalStock + defectiveStock + disposalStock,
+      item_count:      (g.items || []).length,
+    };
+  }) : [];
+
   // 탭 카운트
   const all = _invAll;
   document.getElementById('invtab-all').textContent        = all.length;
@@ -144,7 +180,7 @@ function invApplyFilter() {
   invUpdateCatCounts();
   invUpdateFilterStatus();
 
-  invRenderTable(list);
+  invRenderTable(list, groupRows);
 }
 
 function invGetTabFiltered() {
@@ -193,15 +229,38 @@ function invUpdateFilterStatus() {
 }
 
 // ── 테이블 렌더 ──────────────────────────────────────────────────
-function invRenderTable(list) {
+function invRenderTable(list, groupRows = []) {
   const tbody = document.getElementById('inv-tbody');
   if (!tbody) return;
-  if (!list.length) {
+
+  // 그룹 행 HTML
+  const groupHtml = groupRows.map(g => `
+    <tr class="inv-row inv-group-row" onclick="invShowGroupDetail('${g.id}')" title="그룹 클릭 시 상세 보기">
+      <td>${invCatBadge(g.category)}</td>
+      <td class="inv-brand-tag">${escHtml(g.manufacturer)}</td>
+      <td colspan="2"><strong style="font-size:.83rem">${escHtml(g.group_name)}</strong>
+        <span class="inv-group-badge">📦 그룹</span>
+        <span style="font-size:.75rem;color:var(--gray-400)">(${g.item_count}개 상품)</span>
+      </td>
+      <td>—</td>
+      <td>
+        ${g.normal_stock > 0    ? `<span class="inv-stock-ok">${g.normal_stock}</span> ` : ''}
+        ${g.defective_stock > 0 ? `<span class="inv-cond-badge defective">${g.defective_stock}</span> ` : ''}
+        ${g.disposal_stock > 0  ? `<span class="inv-cond-badge disposal">${g.disposal_stock}</span>` : ''}
+        ${g.total_stock === 0   ? '<span style="color:var(--gray-300)">—</span>' : ''}
+      </td>
+      <td colspan="9" style="color:var(--gray-400);font-size:.78rem">
+        정상 ${g.normal_stock} / 불량 ${g.defective_stock} / 폐기 ${g.disposal_stock}
+      </td>
+    </tr>
+  `).join('');
+
+  if (!list.length && !groupRows.length) {
     tbody.innerHTML = '<tr><td colspan="15" class="empty">재고 데이터가 없습니다.</td></tr>';
     return;
   }
 
-  tbody.innerHTML = list.map(r => {
+  tbody.innerHTML = groupHtml + list.map(r => {
     const hasTemp  = (r.has_temp_purchase || 0) > 0;
     const warnBadge = hasTemp ? ' <span class="inv-temp-badge" title="임시매입 포함">⚠</span>' : '';
 
@@ -251,6 +310,48 @@ function invRenderTable(list) {
     </tr>`;
   }).join('');
 }
+
+// ── 그룹 상세 팝업 ───────────────────────────────────────────────
+window.invShowGroupDetail = async function(groupId) {
+  const modal     = document.getElementById('modal-inv-group');
+  const titleEl   = document.getElementById('inv-group-title');
+  const contentEl = document.getElementById('inv-group-content');
+  modal.classList.remove('hidden');
+  contentEl.innerHTML = '<p class="empty">조회 중...</p>';
+
+  try {
+    const g = await API.get(`/product-groups/${groupId}`);
+    titleEl.textContent = g.group_name;
+
+    let totalNormal = 0, totalDefective = 0, totalDisposal = 0;
+    g.items.forEach(i => {
+      totalNormal    += i.normal_stock    || 0;
+      totalDefective += i.defective_stock || 0;
+      totalDisposal  += i.disposal_stock  || 0;
+    });
+
+    contentEl.innerHTML = `
+      <table class="data-table inv-hist-tbl" style="font-size:.82rem">
+        <thead><tr><th>브랜드</th><th>모델명</th><th>스펙</th><th>정상</th><th>불량</th><th>폐기</th></tr></thead>
+        <tbody>
+          ${g.items.length ? g.items.map(i => `<tr>
+            <td>${escHtml(i.manufacturer)}</td>
+            <td>${escHtml(i.model_name)}</td>
+            <td>${escHtml(i.spec || '—')}</td>
+            <td>${i.normal_stock    > 0 ? `<span class="inv-stock-ok">${i.normal_stock}</span>`    : '<span style="color:var(--gray-300)">—</span>'}</td>
+            <td>${i.defective_stock > 0 ? `<span class="inv-cond-badge defective">${i.defective_stock}</span>` : '<span style="color:var(--gray-300)">—</span>'}</td>
+            <td>${i.disposal_stock  > 0 ? `<span class="inv-cond-badge disposal">${i.disposal_stock}</span>`   : '<span style="color:var(--gray-300)">—</span>'}</td>
+          </tr>`).join('') : '<tr><td colspan="6" class="empty">포함 상품 없음</td></tr>'}
+        </tbody>
+      </table>
+      <div class="pg-detail-summary">
+        합계 — 정상 <strong>${totalNormal}</strong>개 / 불량 <strong>${totalDefective}</strong>개 / 폐기 <strong>${totalDisposal}</strong>개
+      </div>
+    `;
+  } catch (err) {
+    contentEl.innerHTML = `<p class="empty" style="color:var(--danger)">${err.message}</p>`;
+  }
+};
 
 // ══════════════════════════════════════════════
 //  상세 팝업
