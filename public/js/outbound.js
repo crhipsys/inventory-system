@@ -188,6 +188,7 @@ function obRenderDetail(order, vendorInfo) {
     const _vAddr = vendorInfo.registered_address || vendorInfo.address || '';
     if (_vAddr) vendorRows += `<div class="ob-dd-pair"><dt>사업장주소</dt><dd>${escHtml(_vAddr)}</dd></div>`;
     if (vendorInfo.phone) vendorRows += `<div class="ob-dd-pair"><dt>전화번호</dt><dd>${escHtml(vendorInfo.phone)}</dd></div>`;
+    if (vendorInfo.name) vendorRows += `<div class="ob-dd-pair"><dt>이름</dt><dd>${escHtml(vendorInfo.name)}</dd></div>`;
   } else if (order.vendor_name) {
     vendorRows = `<div class="ob-dd-pair"><dt>상호명</dt><dd>${escHtml(order.vendor_name)}</dd></div>`;
   }
@@ -820,6 +821,7 @@ function obStatementHtml(order, company, vendorInfo) {
           ${vendorInfo?.business_number ? `<tr><td>사업자번호</td><td>${fmtBizNum(vendorInfo.business_number)}</td></tr>` : ''}
           ${(vendorInfo?.registered_address || vendorInfo?.address) ? `<tr><td>주소</td><td>${escHtml(vendorInfo.registered_address || vendorInfo.address)}</td></tr>` : ''}
           ${vendorInfo?.phone ? `<tr><td>전화번호</td><td>${fmtPhone(vendorInfo.phone)}</td></tr>` : ''}
+          ${vendorInfo?.name ? `<tr><td>이름</td><td>${escHtml(vendorInfo.name)}</td></tr>` : ''}
         </table>
       </div>
     </div>
