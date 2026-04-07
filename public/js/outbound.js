@@ -518,9 +518,9 @@ window.obSelectVendor = function(id, name) {
 window.obShowNewVendorModal = function() {
   const q = document.getElementById('ob-vendor-input')?.value?.trim() || '';
   document.getElementById('ob-nv-company').value = q;
-  document.getElementById('ob-nv-name').value    = '';
-  document.getElementById('ob-nv-contact').value = '';
   document.getElementById('ob-nv-phone').value   = '';
+  document.getElementById('ob-nv-name').value    = '';
+  document.getElementById('ob-nv-address').value = '';
   document.getElementById('ob-nv-biz').value     = '';
   const fileEl = document.getElementById('ob-nv-file');
   if (fileEl) fileEl.value = '';
@@ -532,14 +532,18 @@ window.obShowNewVendorModal = function() {
 
 window.obConfirmNewVendor = async function() {
   const company = document.getElementById('ob-nv-company').value.trim();
-  const name    = document.getElementById('ob-nv-name').value.trim();
-  const contact = document.getElementById('ob-nv-contact').value.trim();
   const phone   = document.getElementById('ob-nv-phone').value.replace(/\D/g, '');
+  const name    = document.getElementById('ob-nv-name').value.trim();
+  const address = document.getElementById('ob-nv-address').value.trim();
   const biz     = document.getElementById('ob-nv-biz').value.replace(/\D/g, '');
   const errEl   = document.getElementById('ob-nv-err');
 
-  if (!company || !contact || !phone) {
-    errEl.textContent = '상호명, 담당자 이름, 전화번호는 필수입니다.';
+  if (!company) {
+    errEl.textContent = '상호명을 입력해주세요.';
+    errEl.classList.remove('hidden'); return;
+  }
+  if (!phone) {
+    errEl.textContent = '전화번호를 입력해주세요.';
     errEl.classList.remove('hidden'); return;
   }
   if (phone.length < 10 || phone.length > 11) {
@@ -551,8 +555,8 @@ window.obConfirmNewVendor = async function() {
   if (btn) btn.disabled = true;
   try {
     const v = await API.post('/sales-vendors', {
-      company_name: company, name: name || null, contact_person: contact,
-      phone, business_number: biz || null,
+      company_name: company, name: name || null,
+      phone, registered_address: address || null, business_number: biz || null,
     });
     if (Array.isArray(allSalesVendors)) allSalesVendors.push(v);
 
