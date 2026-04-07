@@ -92,6 +92,42 @@ async function removeFromInventory(db, manufacturer, modelName, qty, price, spec
   );
 }
 
+/**
+ * 재고 수량이 0이고 활성 입고/출고 이력이 없는 orphan row 삭제
+ * @returns {boolean} 삭제됐으면 true
+ */
+async function cleanupZeroInventory(db, manufacturer, modelName, spec = '', conditionType = 'normal') {
+  const specVal = (spec || '').toLowerCase().trim();
+  const ct      = conditionType || 'normal';
+
+  const inv = await db.getAsync(
+    `SELECT id, current_stock FROM inventory
+     WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
+    [manufacturer, modelName, specVal, ct]
+  );
+  if (!inv || inv.current_stock > 0) return false;
+
+  // 활성 입고 (completed/priority) 이력 확인
+  const hasInbound = await db.getAsync(
+    `SELECT 1 FROM inbound
+     WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?
+       AND status IN ('completed','priority') AND is_deleted=0 LIMIT 1`,
+    [manufacturer, modelName, specVal, ct]
+  );
+  if (hasInbound) return false;
+
+  // 활성 출고 이력 확인
+  const hasOutbound = await db.getAsync(
+    `SELECT 1 FROM outbound_items
+     WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND is_deleted=0 LIMIT 1`,
+    [manufacturer, modelName, specVal]
+  );
+  if (hasOutbound) return false;
+
+  await db.runAsync('DELETE FROM inventory WHERE id=?', [inv.id]);
+  return true;
+}
+
 /** 매입가 변경 → 이동평균 재계산 */
 async function recalcAvgForPriceChange(db, manufacturer, modelName, qty, oldPrice, newPrice, spec = '', conditionType = 'normal') {
   const specVal = (spec || '').toLowerCase().trim();
@@ -476,7 +512,7 @@ router.put('/:id', auth('editor'), async (req, res) => {
     const { order_date, vendor_id, vendor_name, items } = req.body;
     const n = nowStr();
 
-    // 기존 품목 재고 역산
+    // 1. 기존 품목 재고 역산
     const oldItems = await db.allAsync(
       'SELECT * FROM inbound WHERE order_id = ? AND is_deleted = 0', [req.params.id]
     );
@@ -485,10 +521,19 @@ router.put('/:id', auth('editor'), async (req, res) => {
         await removeFromInventory(db, it.manufacturer, it.model_name, it.quantity, it.purchase_price,
           it.spec || '', it.condition_type || 'normal');
     }
+
+    // 2. 기존 품목 소프트 삭제
     await db.runAsync(
       'UPDATE inbound SET is_deleted=1, deleted_at=? WHERE order_id=? AND is_deleted=0',
       [n, req.params.id]
     );
+
+    // 3. 재고 수량이 0이 된 orphan row 정리 (소프트 삭제 후에 체크)
+    for (const it of oldItems) {
+      if (it.status === 'completed' || it.status === 'priority')
+        await cleanupZeroInventory(db, it.manufacturer, it.model_name,
+          it.spec || '', it.condition_type || 'normal');
+    }
 
     // 거래처 자동 생성
     let resolvedVendorId = vendor_id || null;
@@ -553,6 +598,42 @@ router.put('/:id', auth('editor'), async (req, res) => {
     const updated      = await db.getAsync('SELECT * FROM inbound_orders WHERE id = ?', [req.params.id]);
     const updatedItems = await db.allAsync('SELECT * FROM inbound WHERE order_id=? AND is_deleted=0', [req.params.id]);
     res.json({ ...updated, items: updatedItems, warnings });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /admin/cleanup-orphan-inventory — 기존 고아 재고 row 일괄 정리 (admin only)
+router.post('/admin/cleanup-orphan-inventory', auth('admin'), async (req, res) => {
+  try {
+    const db = getDB();
+    const zeroRows = await db.allAsync(
+      `SELECT id, manufacturer, model_name, COALESCE(spec,'') AS spec, condition_type
+       FROM inventory WHERE current_stock = 0`
+    );
+
+    let deleted = 0;
+    const kept  = [];
+
+    for (const row of zeroRows) {
+      const hasInbound = await db.getAsync(
+        `SELECT 1 FROM inbound
+         WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?
+           AND status IN ('completed','priority') AND is_deleted=0 LIMIT 1`,
+        [row.manufacturer, row.model_name, row.spec, row.condition_type]
+      );
+      if (hasInbound) { kept.push(`${row.manufacturer} ${row.model_name} (활성입고)`); continue; }
+
+      const hasOutbound = await db.getAsync(
+        `SELECT 1 FROM outbound_items
+         WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND is_deleted=0 LIMIT 1`,
+        [row.manufacturer, row.model_name, row.spec]
+      );
+      if (hasOutbound) { kept.push(`${row.manufacturer} ${row.model_name} (출고이력)`); continue; }
+
+      await db.runAsync('DELETE FROM inventory WHERE id=?', [row.id]);
+      deleted++;
+    }
+
+    res.json({ deleted, kept, message: `고아 재고 ${deleted}건 삭제, ${kept.length}건 유지` });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
