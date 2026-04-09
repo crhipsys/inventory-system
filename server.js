@@ -5,8 +5,9 @@ require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
 const path    = require('path');
+const cron    = require('node-cron');
 
-const { initDB } = require('./db/database');
+const { initDB, getDB, nowStr } = require('./db/database');
 
 const app = express();
 
@@ -19,17 +20,19 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // API 라우트
-app.use('/api/auth',      require('./routes/auth'));
+app.use('/api/auth',           require('./routes/auth'));
 const makeVendorRouter = require('./routes/vendorFactory');
 app.use('/api/purchase-vendors', makeVendorRouter('purchase_vendors'));
 app.use('/api/sales-vendors',    makeVendorRouter('sales_vendors'));
-app.use('/api/inbound',   require('./routes/inbound'));
-app.use('/api/outbound',  require('./routes/outbound'));
-app.use('/api/returns',   require('./routes/returns'));
-app.use('/api/inventory', require('./routes/inventory'));
-app.use('/api/sales',      require('./routes/sales'));
-app.use('/api/company',         require('./routes/company'));
-app.use('/api/dashboard',       require('./routes/dashboard'));
+app.use('/api/inbound',          require('./routes/inbound'));
+app.use('/api/outbound',         require('./routes/outbound'));
+app.use('/api/returns',          require('./routes/returns'));
+app.use('/api/inventory',        require('./routes/inventory'));
+app.use('/api/sales',            require('./routes/sales'));
+app.use('/api/company',          require('./routes/company'));
+app.use('/api/dashboard',        require('./routes/dashboard'));
+app.use('/api/trash',            require('./routes/trash'));
+app.use('/api/audit-log',        require('./routes/auditLog'));
 
 // 헬스체크 (Railway 배포용)
 app.get('/api/health', (req, res) => {
@@ -46,12 +49,41 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// ── 휴지통 만료 항목 자동 영구삭제 ────────────────────
+async function purgeExpiredTrash() {
+  try {
+    const db   = getDB();
+    const now  = nowStr();
+    const rows = await db.allAsync(
+      `SELECT * FROM trash WHERE auto_delete_at <= ?`, [now]
+    );
+    if (!rows.length) return;
+
+    for (const t of rows) {
+      try {
+        await db.runAsync(`DELETE FROM ${t.table_name} WHERE id=?`, [t.record_id]);
+      } catch (_) { /* 이미 삭제된 레코드는 무시 */ }
+      await db.runAsync('DELETE FROM trash WHERE id=?', [t.id]);
+    }
+    console.log(`[Trash] 만료 항목 ${rows.length}개 영구 삭제 완료 (${now})`);
+  } catch (err) {
+    console.error('[Trash] 자동 삭제 실패:', err.message);
+  }
+}
+
 // 서버 시작
 const PORT = process.env.PORT || 3000;
 
 (async () => {
   try {
     await initDB();
+
+    // 서버 시작 시 만료 항목 즉시 삭제
+    await purgeExpiredTrash();
+
+    // 매일 자정 자동 삭제 (한국시간 기준 KST 00:00 = UTC 15:00)
+    cron.schedule('0 15 * * *', purgeExpiredTrash, { timezone: 'Asia/Seoul' });
+
     app.listen(PORT, () => {
       console.log(`\n✅ 재고관리 서버 실행 중: http://localhost:${PORT}`);
       console.log(`   환경: ${process.env.NODE_ENV || 'development'}`);

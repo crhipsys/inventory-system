@@ -102,6 +102,12 @@
         <li class="nav-admin"><a class="nav-link" data-page="users">
           <span class="nav-icon">👥</span><span class="nav-text">사용자 관리</span>
         </a></li>
+        <li class="nav-admin"><a class="nav-link" data-page="trash">
+          <span class="nav-icon">🗑️</span><span class="nav-text">휴지통</span>
+        </a></li>
+        <li class="nav-admin"><a class="nav-link" data-page="audit-log">
+          <span class="nav-icon">📋</span><span class="nav-text">감사로그</span>
+        </a></li>
         <li><a class="nav-link" data-page="company">
           <span class="nav-icon">🏢</span><span class="nav-text">회사 정보</span>
         </a></li>
@@ -1345,6 +1351,59 @@
           </form>
         </div>
 
+        <!-- 휴지통 -->
+        <div id="page-trash" class="page">
+          <div class="page-toolbar">
+            <span style="font-weight:700;font-size:.95rem">🗑️ 휴지통</span>
+            <div style="flex:1"></div>
+            <input id="trash-search" type="text" class="search-input" placeholder="유형, 내용, 삭제자 검색..." style="width:220px" />
+          </div>
+          <p style="font-size:.82rem;color:var(--gray-500);margin:.25rem 0 .75rem">삭제 후 30일이 지나면 자동으로 영구 삭제됩니다.</p>
+          <div class="table-wrap">
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th>유형</th><th>내용</th><th>삭제자</th>
+                  <th>삭제일시</th><th>자동삭제 예정일</th><th>액션</th>
+                </tr>
+              </thead>
+              <tbody id="trash-tbody">
+                <tr><td colspan="6" class="empty">로딩 중...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 감사로그 -->
+        <div id="page-audit-log" class="page">
+          <div class="page-toolbar">
+            <span style="font-weight:700;font-size:.95rem">📋 감사로그</span>
+            <div style="flex:1"></div>
+            <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+              <input id="al-date-start" type="text" class="ib-date-inp" placeholder="시작일" autocomplete="off" style="width:110px" />
+              <span style="color:var(--gray-400)">~</span>
+              <input id="al-date-end" type="text" class="ib-date-inp" placeholder="종료일" autocomplete="off" style="width:110px" />
+              <button class="btn btn-ghost btn-sm" id="btn-al-search">검색</button>
+              <button class="btn btn-ghost btn-sm" id="btn-al-reset">초기화</button>
+              <input id="al-search" type="text" class="search-input" placeholder="수행자, 메뉴, 내용 검색..." style="width:200px" />
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th>일시</th><th>수행자</th><th>메뉴</th>
+                  <th>작업</th><th>내용</th><th>상세</th>
+                </tr>
+              </thead>
+              <tbody id="al-tbody">
+                <tr><td colspan="6" class="empty">로딩 중...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="al-count" style="font-size:.82rem;color:var(--gray-500);margin-top:.5rem"></div>
+        </div>
+
       </main>
     </div>
   </div>
@@ -1937,5 +1996,7 @@
 <script src="/js/company.js"></script>
 <script src="/js/returns.js"></script>
 <script src="/js/sales.js"></script>
+<script src="/js/trash.js"></script>
+<script src="/js/auditLog.js"></script>
 </body>
 </html>

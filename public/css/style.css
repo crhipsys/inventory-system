@@ -1814,3 +1814,28 @@ body.viewer-mode .db-editor-only { display: none !important; }
 .ob-sf-val { font-weight: 700; font-size: .95rem; color: var(--text); }
 .ob-sf-sep { color: var(--gray-400); font-size: 1rem; font-weight: 400; }
 .ob-sf-total .ob-sf-val { font-size: 1.05rem; color: var(--primary); }
+
+/* ── 휴지통 ── */
+.trash-type-badge {
+  display: inline-block; padding: .15rem .5rem;
+  background: var(--gray-100); border: 1px solid var(--gray-200);
+  border-radius: 999px; font-size: .78rem; color: var(--gray-700);
+  white-space: nowrap;
+}
+
+/* ── 감사로그 ── */
+.al-table-badge {
+  display: inline-block; padding: .15rem .5rem;
+  background: #e8f4fd; border-radius: 999px;
+  font-size: .78rem; color: #1971c2; white-space: nowrap;
+}
+.al-action          { display: inline-block; padding: .1rem .45rem; border-radius: 4px; font-size: .8rem; font-weight: 700; }
+.al-act-create      { background: #d3f9d8; color: #2f9e44; }
+.al-act-update      { background: #fff3bf; color: #e67700; }
+.al-act-delete      { background: #ffe3e3; color: #c92a2a; }
+.al-pre {
+  background: var(--gray-50); border: 1px solid var(--gray-200);
+  border-radius: 6px; padding: .6rem .75rem;
+  font-size: .75rem; line-height: 1.5;
+  overflow: auto; max-height: 260px; white-space: pre-wrap; word-break: break-all;
+}
