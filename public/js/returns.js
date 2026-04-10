@@ -275,7 +275,8 @@ function rtRenderDetail(order) {
     exchangeSection = `
       <div class="ib-header-card" style="margin-top:.75rem">
         <div class="rt-section-title">🔄 교환 출고 품목</div>
-        <div class="table-wrap" style="overflow-x:auto">
+        <div class="dual-scroll-top" id="rt-ex-scroll-top"><div class="dual-scroll-inner"></div></div>
+        <div class="dual-scroll-wrap" id="rt-ex-table-wrap" style="max-height:50vh">
           <table class="tbl rt-detail-tbl" style="min-width:820px">
             <colgroup>
               <col style="width:70px">
@@ -293,6 +294,7 @@ function rtRenderDetail(order) {
             </tr></thead>
             <tbody>${exItemsHtml}</tbody>
           </table>
+        </div>
         </div>
         <div style="text-align:right;padding:.5rem .25rem;font-size:.88rem;font-weight:600">
           ${totalLine}
@@ -322,7 +324,8 @@ function rtRenderDetail(order) {
 
     <div class="ib-header-card" style="margin-top:.75rem">
       <div class="rt-section-title">📦 반품 품목</div>
-      <div class="table-wrap" style="overflow-x:auto">
+      <div class="dual-scroll-top" id="rt-rt-scroll-top"><div class="dual-scroll-inner"></div></div>
+      <div class="dual-scroll-wrap" id="rt-rt-table-wrap" style="max-height:50vh">
         <table class="tbl rt-detail-tbl" style="min-width:720px">
           <colgroup>
             <col style="width:70px">
@@ -342,6 +345,17 @@ function rtRenderDetail(order) {
       </div>
     </div>
     ${exchangeSection}`;
+
+  initDualScroll(
+    document.getElementById('rt-rt-table-wrap'),
+    document.getElementById('rt-rt-scroll-top')
+  );
+  if (exchangeSection) {
+    initDualScroll(
+      document.getElementById('rt-ex-table-wrap'),
+      document.getElementById('rt-ex-scroll-top')
+    );
+  }
 
   // 상태 변경 버튼 렌더
   rtRenderStatusActions(order);

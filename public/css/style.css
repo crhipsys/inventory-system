@@ -263,6 +263,24 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .ib-td-notes { vertical-align: top; }
 .ib-td-spec  { font-size: .82rem; color: var(--gray-700); }
 
+/* ── 제너릭 듀얼 스크롤 (상단 + 하단 가로 스크롤바 연동) ── */
+.dual-scroll-top {
+  overflow-x: auto; overflow-y: hidden;
+  height: 14px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  border: 1px solid var(--gray-200); border-bottom: none;
+}
+.dual-scroll-inner { height: 1px; }
+.dual-scroll-wrap {
+  overflow-x: auto; overflow-y: auto;
+  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: var(--shadow);
+}
+.dual-scroll-wrap thead th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--gray-50);
+}
+
 /* 출고 상세 테이블 */
 .ob-detail-tbl { table-layout: fixed; min-width: 1100px; }
 .ob-detail-tbl td { white-space: normal; word-break: break-all; vertical-align: top; }
@@ -1445,8 +1463,10 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 
 /* ── 테이블 래퍼 ── */
 .sl-table-wrap {
-  overflow-x: auto; border: 1px solid var(--gray-200);
-  border-radius: var(--radius) var(--radius) 0 0;
+  overflow-x: auto; overflow-y: auto;
+  max-height: calc(100vh - 280px);
+  border: 1px solid var(--gray-200);
+  border-radius: 0 0 var(--radius) var(--radius);
   flex: 1; min-height: 0;
 }
 
@@ -1455,12 +1475,13 @@ textarea.form-control { resize: vertical; min-height: 70px; }
   width: 100%; border-collapse: collapse; background: #fff;
   font-size: .82rem;
 }
-.sl-table thead tr { background: var(--gray-50); position: sticky; top: 0; z-index: 2; }
+.sl-table thead tr { background: var(--gray-50); }
 .sl-table th {
   padding: .5rem .65rem;
   font-size: .73rem; font-weight: 700; color: var(--gray-600);
   border-bottom: 2px solid var(--gray-200); white-space: nowrap;
   text-align: left;
+  position: sticky; top: 0; z-index: 2; background: var(--gray-50);
 }
 .sl-table th.sl-num, .sl-table td.sl-num { text-align: right; }
 .sl-table td {

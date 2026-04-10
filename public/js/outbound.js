@@ -209,7 +209,9 @@ function obRenderDetail(order, vendorInfo) {
       </div>
     </div>
 
-    <div class="ib-header-card" style="margin-top:.75rem;padding:0;overflow-x:auto">
+    <div class="ib-header-card" style="margin-top:.75rem;padding:0;overflow:visible">
+      <div class="dual-scroll-top" id="ob-scroll-top"><div class="dual-scroll-inner"></div></div>
+      <div class="dual-scroll-wrap" id="ob-table-wrap" style="max-height:60vh">
       <table class="tbl ob-detail-tbl">
         <colgroup>
           <col style="width:40px">
@@ -250,10 +252,16 @@ function obRenderDetail(order, vendorInfo) {
           </tr>
         </tfoot>
       </table>
+      </div>
     </div>
   `;
 
   document.getElementById('ob-detail-content').innerHTML = html;
+
+  initDualScroll(
+    document.getElementById('ob-table-wrap'),
+    document.getElementById('ob-scroll-top')
+  );
 
   // 스티키 푸터 업데이트
   const footer = document.getElementById('ob-sticky-footer');

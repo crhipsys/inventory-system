@@ -266,6 +266,11 @@ function invRenderTable(list) {
       <td style="text-align:center">${ssCell}</td>
     </tr>`;
   }).join('');
+
+  initDualScroll(
+    document.getElementById('inv-table-wrap'),
+    document.getElementById('inv-scroll-top')
+  );
 }
 
 // ══════════════════════════════════════════════

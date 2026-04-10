@@ -149,6 +149,11 @@ function slRenderTable() {
       <td>${typeLabel}</td>
     </tr>`;
   }).join('');
+
+  initDualScroll(
+    document.getElementById('sl-table-wrap'),
+    document.getElementById('sl-scroll-top')
+  );
 }
 
 function slTypeLabel(type) {

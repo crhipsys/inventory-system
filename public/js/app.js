@@ -202,6 +202,27 @@ function truncate(str, max = 18) {
   return str.length > max ? str.slice(0, max) + '…' : str;
 }
 
+// ── 듀얼 스크롤바 연동 (상단↔하단 가로 스크롤 동기화) ──────────
+function initDualScroll(wrapEl, topBarEl) {
+  if (!wrapEl || !topBarEl) return;
+  const inner = topBarEl.querySelector('.dual-scroll-inner');
+  if (!inner) return;
+  const syncWidth = () => { inner.style.width = wrapEl.scrollWidth + 'px'; };
+  requestAnimationFrame(syncWidth);
+  new ResizeObserver(syncWidth).observe(wrapEl);
+  let syncTop = false, syncBot = false;
+  topBarEl.addEventListener('scroll', () => {
+    if (syncBot) return; syncTop = true;
+    wrapEl.scrollLeft = topBarEl.scrollLeft;
+    syncTop = false;
+  });
+  wrapEl.addEventListener('scroll', () => {
+    if (syncTop) return; syncBot = true;
+    topBarEl.scrollLeft = wrapEl.scrollLeft;
+    syncBot = false;
+  });
+}
+
 function licenseDisplayName(filename) {
   if (!filename) return null;
   const ext = filename.split('.').pop().toLowerCase();
