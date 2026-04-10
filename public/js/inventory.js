@@ -243,7 +243,10 @@ function invRenderTable(list) {
       return cls ? `<span class="${cls}">${invNum(n)}</span>` : invNum(n);
     };
 
-    const notesVal = r.notes || '';
+    const notesVal  = r.notes?.trim() || '';
+    const notesCell = notesVal
+      ? `<span title="${escHtml(notesVal)}">${escHtml(notesVal)}</span>`
+      : '<span style="color:var(--gray-400)">—</span>';
     const ssCell   = (r.has_smartstore || 0) > 0 ? '<span title="스마트스토어 등록 상품">🛒</span>' : '';
     return `<tr class="inv-row" onclick="invShowDetail('${r.id}')" title="클릭하여 상세 보기">
       <td>${invCatBadge(r.category)}</td>
@@ -259,7 +262,7 @@ function invRenderTable(list) {
       <td>${numCell(r.total_outbound)}</td>
       <td class="inv-price-cell price-col">${invFmt(r.avg_purchase_price)}</td>
       <td class="inv-vendor-cell">${escHtml(r.last_vendor || r.last_vendor_name || '')}</td>
-      <td class="inv-notes-cell" title="${escHtml(notesVal)}">${escHtml(notesVal)}</td>
+      <td class="inv-notes-cell">${notesCell}</td>
       <td style="text-align:center">${ssCell}</td>
     </tr>`;
   }).join('');

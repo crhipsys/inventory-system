@@ -142,6 +142,14 @@ router.put('/items/:itemId/status', auth('editor'), async (req, res) => {
         item.spec || '', item.condition_type || 'normal'
       );
       pctChange = r.pctChange;
+      if (item.notes?.trim()) {
+        const specVal = (item.spec || '').toLowerCase().trim();
+        const condType = item.condition_type || 'normal';
+        await db.runAsync(
+          `UPDATE inventory SET notes=?, updated_at=? WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
+          [item.notes.trim(), n, item.manufacturer, item.model_name, specVal, condType]
+        );
+      }
     } else if (wasActive && !isActive) {
       await removeFromInventory(
         db, item.manufacturer, item.model_name, item.quantity, item.purchase_price,
@@ -341,6 +349,12 @@ router.post('/', auth('editor'), async (req, res) => {
         );
         if (r.pctChange >= 0.3)
           warnings.push({ model: it.model_name, oldAvg: r.oldAvg, newAvg: r.newAvg, pctChange: r.pctChange });
+        if (it.notes?.trim()) {
+          await db.runAsync(
+            `UPDATE inventory SET notes=?, updated_at=? WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
+            [it.notes.trim(), n, it.manufacturer.trim(), it.model_name.trim(), specVal, condType]
+          );
+        }
       }
     }
 
@@ -442,6 +456,12 @@ router.put('/:id', auth('editor'), async (req, res) => {
         );
         if (r.pctChange >= 0.3)
           warnings.push({ model: it.model_name, oldAvg: r.oldAvg, newAvg: r.newAvg, pctChange: r.pctChange });
+        if (it.notes?.trim()) {
+          await db.runAsync(
+            `UPDATE inventory SET notes=?, updated_at=? WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
+            [it.notes.trim(), n, it.manufacturer.trim(), it.model_name.trim(), specVal, condType]
+          );
+        }
       }
     }
 
