@@ -258,18 +258,18 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 }
 .ib-detail-table-wrap .tbl { table-layout: fixed; min-width: 1210px; }
 .ib-detail-table-wrap td {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  white-space: normal; word-break: break-all; vertical-align: top;
 }
-.ib-td-notes { vertical-align: middle; }
+.ib-td-notes { vertical-align: top; }
 .ib-td-spec  { font-size: .82rem; color: var(--gray-700); }
 
 /* 출고 상세 테이블 */
 .ob-detail-tbl { table-layout: fixed; min-width: 1100px; }
-.ob-detail-tbl td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ob-detail-tbl td { white-space: normal; word-break: break-all; vertical-align: top; }
 
 /* 반품/교환 상세 테이블 */
 .rt-detail-tbl { table-layout: fixed; }
-.rt-detail-tbl td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rt-detail-tbl td { white-space: normal; word-break: break-all; vertical-align: top; }
 
 /* 폼 테이블 래퍼 (직접입력 + 엑셀 미리보기) */
 .ib-form-table-wrap {
@@ -1583,7 +1583,7 @@ body.viewer-mode .db-editor-only { display: none !important; }
 .db-kpi-card {
   background: #fff; border: 1px solid var(--gray-200);
   border-radius: var(--radius); padding: 1.2rem 1.4rem;
-  box-shadow: var(--shadow); position: relative; overflow: hidden;
+  box-shadow: var(--shadow); position: relative;
 }
 .db-kpi-card::before {
   content: ''; position: absolute; top: 0; left: 0; width: 4px;
@@ -1596,7 +1596,8 @@ body.viewer-mode .db-editor-only { display: none !important; }
 }
 .db-kpi-value {
   font-size: 1.5rem; font-weight: 700; color: var(--text);
-  margin-bottom: .3rem; line-height: 1.2;
+  margin-bottom: .3rem; line-height: 1.3;
+  word-break: break-word; overflow-wrap: anywhere;
 }
 .db-kpi-diff { font-size: .85rem; font-weight: 600; min-height: 1.2em; }
 .db-kpi-sub  { font-size: .68rem; color: var(--gray-600); margin-top: .25rem; }
@@ -1648,7 +1649,7 @@ body.viewer-mode .db-editor-only { display: none !important; }
 }
 .db-rs-item:last-child { border-right: none; }
 .db-rs-label { font-size: .7rem; color: var(--gray-600); font-weight: 600; }
-.db-rs-val   { font-size: 1rem; font-weight: 700; color: var(--text); }
+.db-rs-val   { font-size: 1rem; font-weight: 700; color: var(--text); word-break: break-word; overflow-wrap: anywhere; }
 
 /* TOP 5 */
 .db-top5 { margin-top: 1rem; }
@@ -1657,7 +1658,7 @@ body.viewer-mode .db-editor-only { display: none !important; }
   margin-bottom: .5rem; text-transform: uppercase; letter-spacing: .04em;
 }
 .db-top-row {
-  display: flex; align-items: center; gap: .6rem;
+  display: flex; align-items: flex-start; gap: .6rem;
   padding: .45rem .2rem; border-bottom: 1px solid var(--gray-100);
   font-size: .85rem;
 }
@@ -1671,10 +1672,10 @@ body.viewer-mode .db-editor-only { display: none !important; }
 .db-top-row:nth-child(1) .db-top-rank { background: #f59f00; }
 .db-top-row:nth-child(2) .db-top-rank { background: #868e96; }
 .db-top-row:nth-child(3) .db-top-rank { background: #cd7f32; }
-.db-top-name { flex: 1; font-weight: 500; }
+.db-top-name { flex: 1; font-weight: 500; word-break: break-word; }
 .db-top-name em { font-style: normal; color: var(--gray-600); font-size: .8rem; }
-.db-top-qty  { color: var(--gray-600); font-size: .8rem; min-width: 45px; text-align: right; }
-.db-top-profit { font-weight: 700; min-width: 100px; text-align: right; }
+.db-top-qty  { color: var(--gray-600); font-size: .8rem; min-width: 40px; text-align: right; white-space: nowrap; }
+.db-top-profit { font-weight: 700; min-width: 80px; text-align: right; word-break: break-word; }
 
 /* ── ④⑤ 하단 행 ────────────────────────────────────────────────────────── */
 .db-bottom-row {

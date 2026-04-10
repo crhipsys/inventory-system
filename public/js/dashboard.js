@@ -7,7 +7,25 @@ let _dbFpFrom       = null;
 let _dbFpTo         = null;
 
 // ── 유틸 ─────────────────────────────────────────────────────────────────────
-const dbWon = v => (v == null ? '—' : Math.round(Number(v)).toLocaleString('ko-KR') + '원');
+function formatLargeNumber(v) {
+  if (v == null) return '—';
+  const n = Math.round(Number(v));
+  if (isNaN(n)) return '—';
+  const abs  = Math.abs(n);
+  const sign = n < 0 ? '-' : '';
+  if (abs >= 100000000) {
+    const eok = Math.floor(abs / 100000000);
+    const man = Math.floor((abs % 100000000) / 10000);
+    return sign + eok.toLocaleString('ko-KR') + '억'
+      + (man > 0 ? ' ' + man.toLocaleString('ko-KR') + '만원' : '원');
+  }
+  if (abs >= 10000) {
+    return sign + Math.floor(abs / 10000).toLocaleString('ko-KR') + '만원';
+  }
+  return sign + abs.toLocaleString('ko-KR') + '원';
+}
+
+const dbWon = v => formatLargeNumber(v);
 const dbNum = v => (v == null ? '—' : Number(v).toLocaleString('ko-KR'));
 
 function dbTodayStr() {
@@ -153,7 +171,9 @@ function dbRenderWeeklyChart(data) {
         y: {
           ticks: {
             callback: v => {
-              if (Math.abs(v) >= 10000) return (v / 10000).toLocaleString('ko-KR') + '만';
+              const abs = Math.abs(v);
+              if (abs >= 100000000) return (v / 100000000).toFixed(1).replace(/\.0$/, '') + '억';
+              if (abs >= 10000) return (v / 10000).toLocaleString('ko-KR') + '만';
               return v.toLocaleString('ko-KR');
             },
           },
@@ -206,7 +226,9 @@ function dbRenderMonthlyChart(data) {
         y: {
           ticks: {
             callback: v => {
-              if (Math.abs(v) >= 10000) return (v / 10000).toLocaleString('ko-KR') + '만';
+              const abs = Math.abs(v);
+              if (abs >= 100000000) return (v / 100000000).toFixed(1).replace(/\.0$/, '') + '억';
+              if (abs >= 10000) return (v / 10000).toLocaleString('ko-KR') + '만';
               return v.toLocaleString('ko-KR');
             },
           },
