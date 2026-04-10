@@ -3,6 +3,7 @@
 const { getDB, nowStr } = require('../db/database');
 const auth   = require('../middleware/auth');
 const router = require('express').Router();
+const { addToInventory, cleanupZeroInventory } = require('../db/inventoryHelpers');
 
 const TABLE_LABELS = {
   inbound_orders:   '매입',
@@ -324,12 +325,42 @@ router.post('/:id/restore', auth('admin'), async (req, res) => {
     const t  = await db.getAsync('SELECT * FROM trash WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: '휴지통 항목을 찾을 수 없습니다.' });
 
-    await db.runAsync(
-      `UPDATE ${t.table_name} SET is_deleted=0, deleted_at=NULL WHERE id=?`,
-      [t.record_id]
-    );
-    await db.runAsync('DELETE FROM trash WHERE id=?', [req.params.id]);
+    if (t.table_name === 'inbound_orders') {
+      // 1. 주문 복구
+      await db.runAsync(
+        'UPDATE inbound_orders SET is_deleted=0, deleted_at=NULL WHERE id=?',
+        [t.record_id]
+      );
+      // 2. 연관 품목 복구
+      await db.runAsync(
+        'UPDATE inbound SET is_deleted=0, deleted_at=NULL WHERE order_id=?',
+        [t.record_id]
+      );
+      // 3. 복구된 품목 조회 후 재고 재추가
+      const items = await db.allAsync(
+        'SELECT * FROM inbound WHERE order_id=? AND is_deleted=0',
+        [t.record_id]
+      );
+      const order = await db.getAsync(
+        'SELECT vendor_id FROM inbound_orders WHERE id=?', [t.record_id]
+      );
+      for (const it of items) {
+        if (it.status === 'completed' || it.status === 'priority') {
+          await addToInventory(
+            db, it.manufacturer, it.model_name, it.category,
+            it.quantity, it.purchase_price, order?.vendor_id,
+            it.spec || '', it.condition_type || 'normal'
+          );
+        }
+      }
+    } else {
+      await db.runAsync(
+        `UPDATE ${t.table_name} SET is_deleted=0, deleted_at=NULL WHERE id=?`,
+        [t.record_id]
+      );
+    }
 
+    await db.runAsync('DELETE FROM trash WHERE id=?', [req.params.id]);
     res.json({ message: '복구되었습니다.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

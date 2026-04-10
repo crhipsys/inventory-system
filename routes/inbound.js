@@ -5,160 +5,10 @@ const { v4: uuidv4 } = require('uuid');
 const { getDB, nowStr } = require('../db/database');
 const auth = require('../middleware/auth');
 const { writeAuditLog, moveToTrash } = require('../middleware/audit');
-
-// ══════════════════════════════════════════════
-//  재고 헬퍼
-// ══════════════════════════════════════════════
-
-/** 재고 추가 + 이동평균 계산. pctChange 반환
- *  spec='': 일반상품, spec='i5 16G': 스펙상품
- *  conditionType: 'normal'|'defective'|'disposal'
- */
-async function addToInventory(db, manufacturer, modelName, category, qty, price, vendorId, spec = '', conditionType = 'normal') {
-  const n        = nowStr();
-  const specVal  = (spec || '').toLowerCase().trim();
-  const prodType = specVal ? 'spec' : 'general';
-  const ct       = conditionType || 'normal';
-
-  const inv = await db.getAsync(
-    `SELECT * FROM inventory WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
-    [manufacturer, modelName, specVal, ct]
-  );
-
-  if (!inv) {
-    // 폐기는 이동평균 없음
-    const initAvg = ct === 'disposal' ? 0 : price;
-    await db.runAsync(
-      `INSERT INTO inventory
-         (id, category, product_type, spec, manufacturer, model_name, condition_type,
-          current_stock, avg_purchase_price, total_inbound, total_outbound, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-      [uuidv4(), category || null, prodType, specVal, manufacturer, modelName, ct,
-       qty, initAvg, qty, n]
-    );
-    return { oldAvg: 0, newAvg: initAvg, pctChange: 0 };
-  }
-
-  const wasZero  = inv.current_stock === 0;
-  const newStock = inv.current_stock + qty;
-  const oldAvg   = inv.avg_purchase_price;
-  // 폐기는 이동평균 계산 제외
-  const newAvg   = ct === 'disposal' ? 0
-    : wasZero ? price
-    : (newStock > 0 ? (inv.current_stock * oldAvg + qty * price) / newStock : 0);
-  const pctChange = oldAvg > 0 ? Math.abs(newAvg - oldAvg) / oldAvg : 0;
-
-  if (ct !== 'disposal' && Math.abs(newAvg - oldAvg) > 0.001) {
-    const avgReason = wasZero ? '재고 소진 후 재매입 - 평균 리셋' : '입고';
-    await db.runAsync(
-      `INSERT INTO avg_price_history
-         (id, manufacturer, model_name, spec, condition_type, old_avg, new_avg, changed_at, reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [uuidv4(), manufacturer, modelName, specVal, ct, oldAvg, newAvg, n, avgReason]
-    );
-  }
-  await db.runAsync(
-    `UPDATE inventory SET current_stock=?, avg_purchase_price=?,
-       total_inbound=total_inbound+?, updated_at=? WHERE id=?`,
-    [newStock, newAvg, qty, n, inv.id]
-  );
-  return { oldAvg, newAvg, pctChange };
-}
-
-/** 재고 차감 + 이동평균 역산 */
-async function removeFromInventory(db, manufacturer, modelName, qty, price, spec = '', conditionType = 'normal') {
-  const specVal = (spec || '').toLowerCase().trim();
-  const ct      = conditionType || 'normal';
-  const inv = await db.getAsync(
-    `SELECT * FROM inventory WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
-    [manufacturer, modelName, specVal, ct]
-  );
-  if (!inv) return;
-
-  const newStock = Math.max(0, inv.current_stock - qty);
-  let newAvg = inv.avg_purchase_price;
-  if (ct !== 'disposal') {
-    if (inv.current_stock > qty) {
-      newAvg = (inv.current_stock * inv.avg_purchase_price - qty * price) / (inv.current_stock - qty);
-      if (newAvg < 0) newAvg = 0;
-    } else if (newStock === 0) {
-      newAvg = 0;
-    }
-  }
-  await db.runAsync(
-    `UPDATE inventory SET current_stock=?, avg_purchase_price=?,
-       total_inbound=MAX(0, total_inbound-?), updated_at=? WHERE id=?`,
-    [newStock, newAvg, qty, nowStr(), inv.id]
-  );
-}
-
-/**
- * 재고 수량이 0이고 활성 입고/출고 이력이 없는 orphan row 삭제
- * @returns {boolean} 삭제됐으면 true
- */
-async function cleanupZeroInventory(db, manufacturer, modelName, spec = '', conditionType = 'normal') {
-  const specVal = (spec || '').toLowerCase().trim();
-  const ct      = conditionType || 'normal';
-
-  const inv = await db.getAsync(
-    `SELECT id, current_stock FROM inventory
-     WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
-    [manufacturer, modelName, specVal, ct]
-  );
-  if (!inv || inv.current_stock > 0) return false;
-
-  // 활성 입고 (completed/priority) 이력 확인
-  const hasInbound = await db.getAsync(
-    `SELECT 1 FROM inbound
-     WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?
-       AND status IN ('completed','priority') AND is_deleted=0 LIMIT 1`,
-    [manufacturer, modelName, specVal, ct]
-  );
-  if (hasInbound) return false;
-
-  // 활성 출고 이력 확인
-  const hasOutbound = await db.getAsync(
-    `SELECT 1 FROM outbound_items
-     WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND is_deleted=0 LIMIT 1`,
-    [manufacturer, modelName, specVal]
-  );
-  if (hasOutbound) return false;
-
-  await db.runAsync('DELETE FROM inventory WHERE id=?', [inv.id]);
-  return true;
-}
-
-/** 매입가 변경 → 이동평균 재계산 */
-async function recalcAvgForPriceChange(db, manufacturer, modelName, qty, oldPrice, newPrice, spec = '', conditionType = 'normal') {
-  const specVal = (spec || '').toLowerCase().trim();
-  const ct      = conditionType || 'normal';
-  if (ct === 'disposal') return { oldAvg: 0, newAvg: 0, pctChange: 0 };
-
-  const inv = await db.getAsync(
-    `SELECT * FROM inventory WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
-    [manufacturer, modelName, specVal, ct]
-  );
-  if (!inv || inv.current_stock <= 0) return { oldAvg: 0, newAvg: 0, pctChange: 0 };
-
-  const oldAvg  = inv.avg_purchase_price;
-  const rawNew  = inv.current_stock * oldAvg - qty * oldPrice + qty * newPrice;
-  const newAvg  = Math.max(0, rawNew / inv.current_stock);
-  const pctChange = oldAvg > 0 ? Math.abs(newAvg - oldAvg) / oldAvg : 0;
-
-  if (Math.abs(newAvg - oldAvg) > 0.001) {
-    await db.runAsync(
-      `INSERT INTO avg_price_history
-         (id, manufacturer, model_name, spec, condition_type, old_avg, new_avg, changed_at, reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '매입가수정')`,
-      [uuidv4(), manufacturer, modelName, specVal, ct, oldAvg, newAvg, nowStr()]
-    );
-  }
-  await db.runAsync(
-    'UPDATE inventory SET avg_purchase_price=?, updated_at=? WHERE id=?',
-    [newAvg, nowStr(), inv.id]
-  );
-  return { oldAvg, newAvg, pctChange };
-}
+const {
+  addToInventory, removeFromInventory,
+  cleanupZeroInventory, recalcAvgForPriceChange,
+} = require('../db/inventoryHelpers');
 
 // ══════════════════════════════════════════════
 //  스펙 자동완성
@@ -601,39 +451,56 @@ router.put('/:id', auth('editor'), async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /admin/cleanup-orphan-inventory — 기존 고아 재고 row 일괄 정리 (admin only)
+// POST /admin/cleanup-orphan-inventory — 기존 고아/불일치 재고 row 일괄 정리 (admin only)
 router.post('/admin/cleanup-orphan-inventory', auth('admin'), async (req, res) => {
   try {
     const db = getDB();
-    const zeroRows = await db.allAsync(
-      `SELECT id, manufacturer, model_name, COALESCE(spec,'') AS spec, condition_type
-       FROM inventory WHERE current_stock = 0`
+    const allRows = await db.allAsync(
+      `SELECT id, manufacturer, model_name, COALESCE(spec,'') AS spec, condition_type, current_stock
+       FROM inventory`
     );
 
     let deleted = 0;
+    let fixed   = 0;
     const kept  = [];
+    const log   = [];
 
-    for (const row of zeroRows) {
-      const hasInbound = await db.getAsync(
-        `SELECT 1 FROM inbound
+    for (const row of allRows) {
+      // 활성 입고 합계
+      const ibSum = await db.getAsync(
+        `SELECT COALESCE(SUM(quantity),0) AS total FROM inbound
          WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?
-           AND status IN ('completed','priority') AND is_deleted=0 LIMIT 1`,
+           AND status IN ('completed','priority') AND is_deleted=0`,
         [row.manufacturer, row.model_name, row.spec, row.condition_type]
       );
-      if (hasInbound) { kept.push(`${row.manufacturer} ${row.model_name} (활성입고)`); continue; }
-
-      const hasOutbound = await db.getAsync(
-        `SELECT 1 FROM outbound_items
-         WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND is_deleted=0 LIMIT 1`,
+      // 활성 출고 합계
+      const obSum = await db.getAsync(
+        `SELECT COALESCE(SUM(quantity),0) AS total FROM outbound_items
+         WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND is_deleted=0`,
         [row.manufacturer, row.model_name, row.spec]
       );
-      if (hasOutbound) { kept.push(`${row.manufacturer} ${row.model_name} (출고이력)`); continue; }
 
-      await db.runAsync('DELETE FROM inventory WHERE id=?', [row.id]);
-      deleted++;
+      const expectedStock = Math.max(0, (ibSum?.total || 0) - (obSum?.total || 0));
+
+      if (expectedStock === 0) {
+        // 활성 이력 없으면 row 삭제
+        await db.runAsync('DELETE FROM inventory WHERE id=?', [row.id]);
+        deleted++;
+        log.push(`[삭제] ${row.manufacturer} ${row.model_name}(${row.spec||'-'}) 재고:${row.current_stock}→0`);
+      } else if (expectedStock !== row.current_stock) {
+        // 수량 불일치 → 보정
+        await db.runAsync(
+          'UPDATE inventory SET current_stock=?, updated_at=? WHERE id=?',
+          [expectedStock, nowStr(), row.id]
+        );
+        fixed++;
+        log.push(`[보정] ${row.manufacturer} ${row.model_name}(${row.spec||'-'}) 재고:${row.current_stock}→${expectedStock}`);
+      } else {
+        kept.push(`${row.manufacturer} ${row.model_name}`);
+      }
     }
 
-    res.json({ deleted, kept, message: `고아 재고 ${deleted}건 삭제, ${kept.length}건 유지` });
+    res.json({ deleted, fixed, kept: kept.length, log, message: `삭제 ${deleted}건, 보정 ${fixed}건, 정상 ${kept.length}건` });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -649,14 +516,25 @@ router.delete('/:id', auth('admin'), async (req, res) => {
     const items = await db.allAsync(
       'SELECT * FROM inbound WHERE order_id = ? AND is_deleted = 0', [req.params.id]
     );
+
+    // 1. 재고 차감 (completed/priority 품목)
     for (const it of items) {
       if (it.status === 'completed' || it.status === 'priority')
         await removeFromInventory(db, it.manufacturer, it.model_name, it.quantity, it.purchase_price,
           it.spec || '', it.condition_type || 'normal');
     }
 
+    // 2. 품목 소프트 삭제 (cleanupZeroInventory 전에 먼저 처리해야 is_deleted=1로 체크 가능)
     const n = nowStr();
     await db.runAsync('UPDATE inbound SET is_deleted=1, deleted_at=? WHERE order_id=?', [n, req.params.id]);
+
+    // 3. 재고 0 된 orphan row 정리
+    for (const it of items) {
+      if (it.status === 'completed' || it.status === 'priority')
+        await cleanupZeroInventory(db, it.manufacturer, it.model_name,
+          it.spec || '', it.condition_type || 'normal');
+    }
+
     await db.runAsync('UPDATE inbound_orders SET is_deleted=1, deleted_at=? WHERE id=?', [n, req.params.id]);
     await moveToTrash('inbound_orders', req.params.id, req.user.id);
     res.json({ message: '매입이 삭제되었습니다.' });
