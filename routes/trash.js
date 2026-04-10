@@ -372,8 +372,36 @@ router.delete('/:id', auth('admin'), async (req, res) => {
     const t  = await db.getAsync('SELECT * FROM trash WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: '휴지통 항목을 찾을 수 없습니다.' });
 
-    await db.runAsync(`DELETE FROM ${t.table_name} WHERE id=?`, [t.record_id]);
-    await db.runAsync('DELETE FROM trash WHERE id=?', [req.params.id]);
+    await db.transaction(async () => {
+      if (t.table_name === 'inbound_orders') {
+        // 1. 하위 품목 ID 조회
+        const items = await db.allAsync(
+          'SELECT id FROM inbound WHERE order_id=?', [t.record_id]
+        );
+        // 2. 매입가 수정이력 삭제
+        for (const it of items) {
+          await db.runAsync('DELETE FROM inbound_price_history WHERE inbound_id=?', [it.id]);
+        }
+        // 3. 입고 품목 삭제
+        await db.runAsync('DELETE FROM inbound WHERE order_id=?', [t.record_id]);
+        // 4. 입고 주문 삭제
+        await db.runAsync('DELETE FROM inbound_orders WHERE id=?', [t.record_id]);
+
+      } else if (t.table_name === 'outbound_orders') {
+        await db.runAsync('DELETE FROM outbound_items WHERE order_id=?', [t.record_id]);
+        await db.runAsync('DELETE FROM outbound_orders WHERE id=?', [t.record_id]);
+
+      } else if (t.table_name === 'return_orders') {
+        await db.runAsync('DELETE FROM return_items WHERE return_order_id=?', [t.record_id]);
+        await db.runAsync('DELETE FROM exchange_items WHERE return_order_id=?', [t.record_id]);
+        await db.runAsync('DELETE FROM return_orders WHERE id=?', [t.record_id]);
+
+      } else {
+        await db.runAsync(`DELETE FROM ${t.table_name} WHERE id=?`, [t.record_id]);
+      }
+
+      await db.runAsync('DELETE FROM trash WHERE id=?', [req.params.id]);
+    });
 
     res.json({ message: '영구 삭제되었습니다.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
