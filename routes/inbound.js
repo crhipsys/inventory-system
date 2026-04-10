@@ -473,12 +473,14 @@ router.post('/admin/cleanup-orphan-inventory', auth('admin'), async (req, res) =
            AND status IN ('completed','priority') AND is_deleted=0`,
         [row.manufacturer, row.model_name, row.spec, row.condition_type]
       );
-      // 활성 출고 합계
-      const obSum = await db.getAsync(
-        `SELECT COALESCE(SUM(quantity),0) AS total FROM outbound_items
-         WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND is_deleted=0`,
-        [row.manufacturer, row.model_name, row.spec]
-      );
+      // 활성 출고 합계 (출고는 condition_type별 분리 없음 → 정상 재고에서만 차감)
+      const obSum = row.condition_type === 'normal'
+        ? await db.getAsync(
+            `SELECT COALESCE(SUM(quantity),0) AS total FROM outbound_items
+             WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND is_deleted=0`,
+            [row.manufacturer, row.model_name, row.spec]
+          )
+        : { total: 0 };
 
       const expectedStock = Math.max(0, (ibSum?.total || 0) - (obSum?.total || 0));
 
@@ -517,26 +519,46 @@ router.delete('/:id', auth('admin'), async (req, res) => {
       'SELECT * FROM inbound WHERE order_id = ? AND is_deleted = 0', [req.params.id]
     );
 
-    // 1. 재고 차감 (completed/priority 품목)
-    for (const it of items) {
-      if (it.status === 'completed' || it.status === 'priority')
-        await removeFromInventory(db, it.manufacturer, it.model_name, it.quantity, it.purchase_price,
-          it.spec || '', it.condition_type || 'normal');
-    }
+    await db.transaction(async () => {
+      const n = nowStr();
 
-    // 2. 품목 소프트 삭제 (cleanupZeroInventory 전에 먼저 처리해야 is_deleted=1로 체크 가능)
-    const n = nowStr();
-    await db.runAsync('UPDATE inbound SET is_deleted=1, deleted_at=? WHERE order_id=?', [n, req.params.id]);
+      // 1. 재고 차감 (completed/priority 품목)
+      for (const it of items) {
+        if (it.status === 'completed' || it.status === 'priority') {
+          const specVal  = (it.spec || '').toLowerCase().trim();
+          const condType = it.condition_type || 'normal';
+          const inv = await db.getAsync(
+            `SELECT id, current_stock FROM inventory
+             WHERE manufacturer=? AND model_name=? AND COALESCE(spec,'')=? AND condition_type=?`,
+            [it.manufacturer, it.model_name, specVal, condType]
+          );
+          if (!inv) {
+            console.warn(
+              `[재고차감 실패] 입고삭제 시 inventory 행 없음: ` +
+              `${it.manufacturer} ${it.model_name}(spec=${specVal}, cond=${condType}) ` +
+              `qty=${it.quantity} — 재고 정합성 확인 필요`
+            );
+          }
+          await removeFromInventory(db, it.manufacturer, it.model_name, it.quantity, it.purchase_price,
+            specVal, condType);
+        }
+      }
 
-    // 3. 재고 0 된 orphan row 정리
-    for (const it of items) {
-      if (it.status === 'completed' || it.status === 'priority')
-        await cleanupZeroInventory(db, it.manufacturer, it.model_name,
-          it.spec || '', it.condition_type || 'normal');
-    }
+      // 2. 품목 소프트 삭제 (cleanupZeroInventory 전에 먼저 처리해야 is_deleted=1로 체크 가능)
+      await db.runAsync('UPDATE inbound SET is_deleted=1, deleted_at=? WHERE order_id=?', [n, req.params.id]);
 
-    await db.runAsync('UPDATE inbound_orders SET is_deleted=1, deleted_at=? WHERE id=?', [n, req.params.id]);
-    await moveToTrash('inbound_orders', req.params.id, req.user.id);
+      // 3. 재고 0 된 orphan row 정리
+      for (const it of items) {
+        if (it.status === 'completed' || it.status === 'priority')
+          await cleanupZeroInventory(db, it.manufacturer, it.model_name,
+            it.spec || '', it.condition_type || 'normal');
+      }
+
+      // 4. 주문 소프트 삭제 + 휴지통 이동
+      await db.runAsync('UPDATE inbound_orders SET is_deleted=1, deleted_at=? WHERE id=?', [n, req.params.id]);
+      await moveToTrash('inbound_orders', req.params.id, req.user.id);
+    });
+
     res.json({ message: '매입이 삭제되었습니다.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
